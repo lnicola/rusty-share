@@ -12,6 +12,7 @@ extern crate hyper;
 extern crate pretty_env_logger;
 extern crate url;
 
+use bytes::Bytes;
 use bytesize::ByteSize;
 use chrono::{DateTime, Local, TimeZone};
 use chrono_humanize::HumanTime;
@@ -37,32 +38,9 @@ struct Server {
     fs_pool: Arc<FsPool>,
 }
 
-enum MyResponse {
-    DirIndex(FutureResult<Response, hyper::Error>),
-    File(Box<Future<Item = Response, Error = hyper::Error> + Send>),
-    Redirect(FutureResult<Response, hyper::Error>),
-    Error,
-}
-
-impl Future for MyResponse {
-    type Item = Response;
-    type Error = hyper::Error;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        match *self {
-            MyResponse::DirIndex(ref mut result) => result.poll(),
-            MyResponse::File(ref mut result) => result.poll(),
-            _ => {
-                let response = Response::new().with_status(StatusCode::NotFound);
-                Ok(Async::Ready(response))
-            }
-        }
-    }
-}
-
 impl Service for Server {
     type Request = Request;
-    type Response = Response;
+    type Response = Response<Box<Stream<Item = Bytes, Error = Self::Error> + Send>>;
     type Error = hyper::Error;
     type Future = CpuFuture<Self::Response, Self::Error>;
 
@@ -70,48 +48,55 @@ impl Service for Server {
         let root = Path::new(".");
         let response = match (req.method(), req.path()) {
             (&Get, path_) => {
-                let path_ = percent_encoding::percent_decode(path_.as_bytes()).decode_utf8().unwrap().into_owned();
+                let path_ = percent_encoding::percent_decode(path_.as_bytes())
+                    .decode_utf8()
+                    .unwrap()
+                    .into_owned();
                 let path = Path::new(&path_);
                 let path = path.strip_prefix("/").unwrap();
                 let path = root.join(path);
                 let metadata = fs::metadata(&path);
                 if metadata.is_err() {
-                    MyResponse::Error
+                    let response = Response::new().with_status(StatusCode::InternalServerError);
+                    Box::new(futures::future::ok(response))
                 } else {
                     let metadata = metadata.unwrap();
                     if metadata.is_dir() {
-                        if !path_.ends_with("/") && fs::symlink_metadata(&path).unwrap().file_type().is_symlink() {
-                            let res = get_dir_index(&path).unwrap();
+                        if !path_.ends_with('/') &&
+                            fs::symlink_metadata(&path)
+                                .unwrap()
+                                .file_type()
+                                .is_symlink()
+                        {
                             let response =
-                                Response::new()
-                                    .with_body(res)
-                                    .with_status(StatusCode::Found)
-                                    .with_header(Location::new(path_.to_string() + &"/"));
-                            MyResponse::DirIndex(future::ok(response))
+                                Response::new().with_status(StatusCode::Found).with_header(
+                                    Location::new(path_.to_string() + "/"),
+                                );
+                            Box::new(futures::future::ok(response))
                         } else {
-                            let res = get_dir_index(&path).unwrap();
-                            let response = Response::new().with_body(res);
-                            MyResponse::DirIndex(future::ok(response))
+                            let page = get_dir_index(&path).unwrap();
+
+                            let body = Box::new(futures::stream::once(Ok(Bytes::from(page)))) as
+                                Box<Stream<Item = Bytes, Error = Self::Error> + Send>;
+                            let response =
+                                Response::new().with_status(StatusCode::Ok).with_body(body);
+
+                            Box::new(futures::future::ok(response))
                         }
                     } else {
-                        let response = Box::new(
-                            self.fs_pool
-                                .read(path)
-                                .concat2()
-                                .map_err(|e| e.into())
-                                .map(|bytes| {
-                                    Response::new()
-                                        .with_status(StatusCode::Ok)
-                                        .with_header(ContentLength(bytes.len() as u64))
-                                        .with_body(bytes)
-                                }),
-                        );
+                        let body = Box::new(self.fs_pool.read(path).map_err(|e| e.into())) as
+                            Box<Stream<Item = Bytes, Error = Self::Error> + Send>;
 
-                        MyResponse::File(response)
+                        let response = Response::new().with_status(StatusCode::Ok).with_body(body);
+
+                        Box::new(futures::future::ok(response))
                     }
                 }
             }
-            _ => MyResponse::Error,
+            _ => {
+                let response = Response::new().with_status(StatusCode::InternalServerError);
+                Box::new(futures::future::ok(response))
+            }
         };
 
         self.pool.spawn(response)
@@ -156,7 +141,7 @@ impl ShareEntry {
     }
 }
 
-fn render_index(entries: &Vec<ShareEntry>) -> String {
+fn render_index(entries: &[ShareEntry]) -> String {
     let doc_header = r#"<!DOCTYPE html>
 <html>
 <head>
@@ -316,7 +301,7 @@ fn render_index(entries: &Vec<ShareEntry>) -> String {
             ).unwrap();
         }
     }
-    res.push_str(&doc_footer);
+    res.push_str(doc_footer);
     res
 }
 
