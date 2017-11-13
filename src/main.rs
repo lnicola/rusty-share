@@ -20,7 +20,7 @@ use futures::{Async, Future, Poll, Stream};
 use futures_cpupool::{CpuFuture, CpuPool};
 use futures_fs::FsPool;
 use hyper::{Body, Get, StatusCode};
-use hyper::header::ContentLength;
+use hyper::header::{ContentLength, Location};
 use hyper::server::{Http, Request, Response, Service};
 use std::ffi::OsString;
 use std::fs::{self, File};
@@ -40,6 +40,7 @@ struct Server {
 enum MyResponse {
     DirIndex(FutureResult<Response, hyper::Error>),
     File(Box<Future<Item = Response, Error = hyper::Error> + Send>),
+    Redirect(FutureResult<Response, hyper::Error>),
     Error,
 }
 
@@ -68,27 +69,46 @@ impl Service for Server {
     fn call(&self, req: Request) -> Self::Future {
         let root = Path::new(".");
         let response = match (req.method(), req.path()) {
-            (&Get, path) => {
-                let path = Path::new(path);
+            (&Get, path_) => {
+                println!("{}", path_);
+                let path = Path::new(path_);
                 let path = path.strip_prefix("/").unwrap();
                 let path = root.join(path);
-                let metadata = fs::metadata(&path).unwrap();
-                if metadata.is_dir() {
-                    let res = get_dir_index(&path).unwrap();
-                    let response = Response::new().with_body(res);
-                    MyResponse::DirIndex(future::ok(response))
+                let metadata = fs::metadata(&path);
+                if metadata.is_err() {
+                    MyResponse::Error
                 } else {
-                    let response =
-                        Box::new(self.fs_pool.read(path).concat2().map_err(|e| e.into()).map(
-                            |bytes| {
+                    let metadata = metadata.unwrap();
+                    if metadata.is_dir() {
+                        if !path_.ends_with("/") && fs::symlink_metadata(&path).unwrap().file_type().is_symlink() {
+                            let res = get_dir_index(&path).unwrap();
+                            let response =
                                 Response::new()
-                                    .with_status(StatusCode::Ok)
-                                    .with_header(ContentLength(bytes.len() as u64))
-                                    .with_body(bytes)
-                            },
-                        ));
+                                    .with_body(res)
+                                    .with_status(StatusCode::Found)
+                                    .with_header(Location::new(path_.to_string() + &"/"));
+                            MyResponse::DirIndex(future::ok(response))
+                        } else {
+                            let res = get_dir_index(&path).unwrap();
+                            let response = Response::new().with_body(res);
+                            MyResponse::DirIndex(future::ok(response))
+                        }
+                    } else {
+                        let response = Box::new(
+                            self.fs_pool
+                                .read(path)
+                                .concat2()
+                                .map_err(|e| e.into())
+                                .map(|bytes| {
+                                    Response::new()
+                                        .with_status(StatusCode::Ok)
+                                        .with_header(ContentLength(bytes.len() as u64))
+                                        .with_body(bytes)
+                                }),
+                        );
 
-                    MyResponse::File(response)
+                        MyResponse::File(response)
+                    }
                 }
             }
             _ => MyResponse::Error,
@@ -100,7 +120,7 @@ impl Service for Server {
 
 fn main() {
     pretty_env_logger::init().unwrap();
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 1337);
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 3010);
 
     let server = Http::new()
         .bind(&addr, || {
