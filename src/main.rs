@@ -1,6 +1,3 @@
-#![allow(dead_code)]
-#![allow(unused_imports)]
-
 extern crate bytes;
 extern crate bytesize;
 extern crate chrono;
@@ -16,18 +13,18 @@ use bytes::Bytes;
 use bytesize::ByteSize;
 use chrono::{DateTime, Local, TimeZone};
 use chrono_humanize::HumanTime;
-use futures::future::{self, FutureResult};
-use futures::{Async, Future, Poll, Stream};
+use futures::future;
+use futures::{stream, Stream};
 use futures_cpupool::{CpuFuture, CpuPool};
 use futures_fs::FsPool;
-use hyper::{Body, Get, StatusCode};
+use hyper::{Get, StatusCode};
 use hyper::header::{ContentLength, Location};
 use hyper::server::{Http, Request, Response, Service};
 use std::ffi::OsString;
-use std::fs::{self, File};
+use std::fs;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::fmt::Write;
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
@@ -45,6 +42,8 @@ impl Service for Server {
     type Future = CpuFuture<Self::Response, Self::Error>;
 
     fn call(&self, req: Request) -> Self::Future {
+        type Body = Box<Stream<Item = Bytes, Error = hyper::Error> + Send>;
+
         let root = Path::new(".");
         let response = match (req.method(), req.path()) {
             (&Get, path_) => {
@@ -68,34 +67,36 @@ impl Service for Server {
                                 .file_type()
                                 .is_symlink()
                         {
-                            let response =
-                                Response::new().with_status(StatusCode::Found).with_header(
-                                    Location::new(path_.to_string() + "/"),
-                                );
-                            Box::new(futures::future::ok(response))
+                            let response = Response::new()
+                                .with_status(StatusCode::Found)
+                                .with_header(Location::new(path_.to_string() + "/"));
+                            Box::new(future::ok(response))
                         } else {
                             let page = get_dir_index(&path).unwrap();
+                            let bytes = Bytes::from(page);
+                            let len = bytes.len() as u64;
+                            let body = Box::new(stream::once(Ok(bytes))) as Body;
+                            let response = Response::new()
+                                .with_status(StatusCode::Ok)
+                                .with_header(ContentLength(len))
+                                .with_body(body);
 
-                            let body = Box::new(futures::stream::once(Ok(Bytes::from(page)))) as
-                                Box<Stream<Item = Bytes, Error = Self::Error> + Send>;
-                            let response =
-                                Response::new().with_status(StatusCode::Ok).with_body(body);
-
-                            Box::new(futures::future::ok(response))
+                            Box::new(future::ok(response))
                         }
                     } else {
-                        let body = Box::new(self.fs_pool.read(path).map_err(|e| e.into())) as
-                            Box<Stream<Item = Bytes, Error = Self::Error> + Send>;
+                        let body = Box::new(self.fs_pool.read(path).map_err(|e| e.into())) as Body;
+                        let response = Response::new()
+                            .with_status(StatusCode::Ok)
+                            .with_header(ContentLength(metadata.len()))
+                            .with_body(body);
 
-                        let response = Response::new().with_status(StatusCode::Ok).with_body(body);
-
-                        Box::new(futures::future::ok(response))
+                        Box::new(future::ok(response))
                     }
                 }
             }
             _ => {
                 let response = Response::new().with_status(StatusCode::InternalServerError);
-                Box::new(futures::future::ok(response))
+                Box::new(future::ok(response))
             }
         };
 
