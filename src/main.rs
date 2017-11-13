@@ -57,7 +57,7 @@ impl Service for Server {
                 let metadata = fs::metadata(&path);
                 if metadata.is_err() {
                     let response = Response::new().with_status(StatusCode::InternalServerError);
-                    Box::new(futures::future::ok(response))
+                    future::ok(response)
                 } else {
                     let metadata = metadata.unwrap();
                     if metadata.is_dir() {
@@ -70,7 +70,7 @@ impl Service for Server {
                             let response = Response::new()
                                 .with_status(StatusCode::Found)
                                 .with_header(Location::new(path_.to_string() + "/"));
-                            Box::new(future::ok(response))
+                            future::ok(response)
                         } else {
                             let page = get_dir_index(&path).unwrap();
                             let bytes = Bytes::from(page);
@@ -81,7 +81,7 @@ impl Service for Server {
                                 .with_header(ContentLength(len))
                                 .with_body(body);
 
-                            Box::new(future::ok(response))
+                            future::ok(response)
                         }
                     } else {
                         let body = Box::new(self.fs_pool.read(path).map_err(|e| e.into())) as Body;
@@ -90,13 +90,13 @@ impl Service for Server {
                             .with_header(ContentLength(metadata.len()))
                             .with_body(body);
 
-                        Box::new(future::ok(response))
+                        future::ok(response)
                     }
                 }
             }
             _ => {
                 let response = Response::new().with_status(StatusCode::InternalServerError);
-                Box::new(future::ok(response))
+                future::ok(response)
             }
         };
 
