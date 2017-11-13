@@ -70,8 +70,8 @@ impl Service for Server {
         let root = Path::new(".");
         let response = match (req.method(), req.path()) {
             (&Get, path_) => {
-                println!("{}", path_);
-                let path = Path::new(path_);
+                let path_ = percent_encoding::percent_decode(path_.as_bytes()).decode_utf8().unwrap().into_owned();
+                let path = Path::new(&path_);
                 let path = path.strip_prefix("/").unwrap();
                 let path = root.join(path);
                 let metadata = fs::metadata(&path);
