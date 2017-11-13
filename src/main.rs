@@ -14,10 +14,10 @@ use bytesize::ByteSize;
 use chrono::{DateTime, Local, TimeZone};
 use chrono_humanize::HumanTime;
 use futures::future;
-use futures::{stream, Stream};
-use futures_cpupool::{CpuFuture, CpuPool};
+use futures::{stream, Future, Sink, Stream};
+use futures_cpupool::CpuPool;
 use futures_fs::FsPool;
-use hyper::{Get, StatusCode};
+use hyper::{Get, Post, StatusCode};
 use hyper::header::{ContentLength, Location};
 use hyper::server::{Http, Request, Response, Service};
 use std::ffi::OsString;
@@ -39,7 +39,7 @@ impl Service for Server {
     type Request = Request;
     type Response = Response<Box<Stream<Item = Bytes, Error = Self::Error> + Send>>;
     type Error = hyper::Error;
-    type Future = CpuFuture<Self::Response, Self::Error>;
+    type Future = Box<Future<Item = Self::Response, Error = Self::Error>>;
 
     fn call(&self, req: Request) -> Self::Future {
         type Body = Box<Stream<Item = Bytes, Error = hyper::Error> + Send>;
@@ -57,7 +57,7 @@ impl Service for Server {
                 let metadata = fs::metadata(&path);
                 if metadata.is_err() {
                     let response = Response::new().with_status(StatusCode::InternalServerError);
-                    future::ok(response)
+                    Box::new(future::ok(response))
                 } else {
                     let metadata = metadata.unwrap();
                     if metadata.is_dir() {
@@ -70,7 +70,7 @@ impl Service for Server {
                             let response = Response::new()
                                 .with_status(StatusCode::Found)
                                 .with_header(Location::new(path_.to_string() + "/"));
-                            future::ok(response)
+                            Box::new(future::ok(response))
                         } else {
                             let page = get_dir_index(&path).unwrap();
                             let bytes = Bytes::from(page);
@@ -81,7 +81,7 @@ impl Service for Server {
                                 .with_header(ContentLength(len))
                                 .with_body(body);
 
-                            future::ok(response)
+                            Box::new(future::ok(response))
                         }
                     } else {
                         let body = Box::new(self.fs_pool.read(path).map_err(|e| e.into())) as Body;
@@ -90,17 +90,30 @@ impl Service for Server {
                             .with_header(ContentLength(metadata.len()))
                             .with_body(body);
 
-                        future::ok(response)
+                        Box::new(future::ok(response))
                     }
                 }
             }
+            (&Post, _path) => {
+                let (tx, rx) = futures::sync::mpsc::channel::<Bytes>(10);
+                let r = self.pool.spawn_fn(|| tx.send(Bytes::from("hello"))).then(
+                    |_| {
+                        let response =
+                            Response::new()
+                                .with_status(StatusCode::Ok)
+                                .with_body(Box::new(rx.map_err(|_| hyper::Error::Method)) as Body);
+                        Box::new(future::ok(response))
+                    },
+                );
+                return Box::new(r);
+            }
             _ => {
                 let response = Response::new().with_status(StatusCode::InternalServerError);
-                future::ok(response)
+                Box::new(future::ok(response))
             }
         };
 
-        self.pool.spawn(response)
+        Box::new(self.pool.spawn(response))
     }
 }
 
