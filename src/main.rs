@@ -30,7 +30,7 @@ use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::fmt::Write;
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
@@ -60,19 +60,20 @@ impl io::Write for Pipe {
 }
 
 struct Archiver {
-    root: PathBuf,
+    // root: Path,
 }
 
 impl Archiver {
     fn write_entry<W>(
         &self,
+        root: &Path,
         entry: &DirEntry,
         builder: &mut Builder<W>,
     ) -> std::result::Result<(), Box<error::Error>>
     where
         W: io::Write,
     {
-        let relative_path = try!(entry.path().strip_prefix(&self.root));
+        let relative_path = try!(entry.path().strip_prefix(&root));
         let metadata = try!(entry.metadata());
         if metadata.is_dir() {
             try!(builder.append_dir(&relative_path, &entry.path()));
@@ -84,18 +85,24 @@ impl Archiver {
         Ok(())
     }
 
-    fn add_to_archive<P, W>(&self, entry: P, builder: &mut Builder<W>) -> std::io::Result<()>
+    fn add_to_archive<P, Q, W>(
+        &self,
+        root: P,
+        entry: Q,
+        builder: &mut Builder<W>,
+    ) -> std::io::Result<()>
     where
         P: AsRef<Path>,
+        Q: AsRef<Path>,
         W: io::Write,
     {
-        let walkdir = WalkDir::new(&self.root.join(&entry));
+        let walkdir = WalkDir::new(root.as_ref().join(&entry));
         let entries = walkdir
             .into_iter()
             .filter_entry(|e| !Archiver::is_hidden(e));
         for e in entries {
             if let Ok(e) = e {
-                if let Err(e) = self.write_entry(&e, builder) {
+                if let Err(e) = self.write_entry(root.as_ref(), &e, builder) {
                     println!("{:?}", e);
                 }
             } else {
@@ -129,16 +136,15 @@ impl Service for Server {
         type Body = Box<Stream<Item = Bytes, Error = hyper::Error> + Send>;
 
         let root = Path::new(".");
+        let path_ = percent_encoding::percent_decode(req.path().as_bytes())
+            .decode_utf8()
+            .unwrap()
+            .into_owned();
+        let path = Path::new(&path_);
+        let path = path.strip_prefix("/").unwrap();
+        let path = root.join(path);
         let response = match *req.method() {
             Get => {
-                let path_ = req.path();
-                let path_ = percent_encoding::percent_decode(path_.as_bytes())
-                    .decode_utf8()
-                    .unwrap()
-                    .into_owned();
-                let path = Path::new(&path_);
-                let path = path.strip_prefix("/").unwrap();
-                let path = root.join(path);
                 let metadata = fs::metadata(&path);
                 if metadata.is_err() {
                     let response = Response::new().with_status(StatusCode::InternalServerError);
@@ -191,14 +197,12 @@ impl Service for Server {
                         let pipe = Pipe { dest: tx.wait() };
 
                         let mut a = Builder::new(pipe);
-                        let archiver = Archiver {
-                            root: PathBuf::from("."),
-                        };
+                        let archiver = Archiver {};
 
                         for (name, value) in form_urlencoded::parse(&b) {
                             if name == "selection[]" {
                                 archiver
-                                    .add_to_archive(Path::new(value.as_ref()), &mut a)
+                                    .add_to_archive(&path, Path::new(value.as_ref()), &mut a)
                                     .unwrap();
                             }
                         }
