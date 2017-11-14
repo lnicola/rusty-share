@@ -14,12 +14,13 @@ extern crate walkdir;
 
 use bytes::Bytes;
 use bytesize::ByteSize;
-use chrono::{DateTime, Local, TimeZone};
 use chrono_humanize::HumanTime;
-use futures::{future, stream, Future, Sink, Stream};
-use futures::sync::mpsc;
+use chrono::{DateTime, Local, TimeZone};
 use futures_cpupool::CpuPool;
 use futures_fs::FsPool;
+use futures::{stream, Future, Sink, Stream};
+use futures::future::{self, FutureResult};
+use futures::sync::mpsc;
 use hyper::{Get, Post, StatusCode};
 use hyper::header::{Charset, ContentDisposition, ContentLength, ContentType, DispositionParam,
                     DispositionType, Location};
@@ -27,12 +28,12 @@ use hyper::mime::{Mime, TEXT_HTML_UTF_8};
 use hyper::server::{Http, Request, Response, Service};
 use std::error;
 use std::ffi::OsString;
+use std::fmt::Write;
 use std::fs::{self, File};
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
-use std::fmt::Write;
-use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 use tar::Builder;
 use tokio_core::net::TcpListener;
@@ -60,8 +61,7 @@ impl io::Write for Pipe {
     }
 }
 
-struct Archiver {
-}
+struct Archiver;
 
 impl Archiver {
     fn write_entry<W>(
@@ -152,12 +152,7 @@ impl Service for Server {
                 } else {
                     let metadata = metadata.unwrap();
                     if metadata.is_dir() {
-                        if !path_.ends_with('/')
-                            && fs::symlink_metadata(&path)
-                                .unwrap()
-                                .file_type()
-                                .is_symlink()
-                        {
+                        if !path_.ends_with('/') {
                             let response = Response::new()
                                 .with_status(StatusCode::Found)
                                 .with_header(Location::new(path_.to_string() + "/"));
@@ -190,14 +185,13 @@ impl Service for Server {
                 let pool = self.pool.clone();
                 let handle = self.handle.clone();
                 let b = req.body().concat2().and_then(move |b| {
-                    use futures::future::FutureResult;
-                    let (tx, rx) = mpsc::channel::<Bytes>(10);
+                    let (tx, rx) = mpsc::channel(10);
 
                     let f = pool.spawn_fn(move || -> FutureResult<_, ()> {
                         let pipe = Pipe { dest: tx.wait() };
 
                         let mut a = Builder::new(pipe);
-                        let archiver = Archiver {};
+                        let archiver = Archiver;
 
                         for (name, value) in form_urlencoded::parse(&b) {
                             if name == "selection[]" {
@@ -231,7 +225,7 @@ impl Service for Server {
                 return Box::new(b);
             }
             _ => {
-                let response = Response::new().with_status(StatusCode::InternalServerError);
+                let response = Response::new().with_status(StatusCode::MethodNotAllowed);
                 Box::new(future::ok(response))
             }
         };
@@ -242,59 +236,28 @@ impl Service for Server {
 
 fn main() {
     pretty_env_logger::init().unwrap();
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 3010);
 
     let mut core = Core::new().unwrap();
     let handle = core.handle();
 
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 3010);
     let listener = TcpListener::bind(&addr, &handle).unwrap();
-
-    let handle1 = handle.clone();
 
     let fs_pool = FsPool::new(4);
     let cpu_pool = CpuPool::new_num_cpus();
 
-    let handle1 = handle.clone();
     let server = listener.incoming().for_each(move |(sock, addr)| {
         let s = Server {
-            handle: handle1.clone(),
+            handle: handle.clone(),
             fs_pool: fs_pool.clone(),
             pool: cpu_pool.clone(),
         };
 
-        Http::new().bind_connection(&handle1, sock, addr, s);
+        Http::new().bind_connection(&handle, sock, addr, s);
 
         Ok(())
     });
     core.run(server).unwrap();
-
-    // let server = Http::new()
-    //     .serve_addr_handle(&addr, &handle, move || {
-    //         Ok(Server {
-    //             handle: handle1.clone(),
-    //             fs_pool: Arc::new(FsPool::new(4)),
-    //             pool: Arc::new(CpuPool::new_num_cpus()),
-    //         })
-    //     })
-    //     .unwrap();
-
-    // println!(
-    //     "Listening on http://{} with 1 thread.",
-    //     server.incoming_ref().local_addr()
-    // );
-
-
-    // let handle1 = handle.clone();
-    // handle.spawn(
-    //     server
-    //         .for_each(move |conn| {
-    //             handle1.spawn(conn.map(|_| ()).map_err(|err| println!("error: {:?}", err)));
-    //             Ok(())
-    //         })
-    //         .map_err(|_| ()),
-    // );
-
-    // core.run(future::empty::<(), ()>()).unwrap();
 }
 
 #[derive(Debug)]
@@ -448,7 +411,7 @@ fn render_index(entries: &[ShareEntry]) -> String {
 </body>
 </html>"#;
     let mut res = String::from(doc_header);
-    use std::os::unix::ffi::OsStrExt;
+
     for entry in entries.iter() {
         let modified = HumanTime::from(entry.modified);
         let link = percent_encoding::percent_encode(
