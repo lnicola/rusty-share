@@ -35,6 +35,7 @@ use std::fmt::Write;
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 use tar::Builder;
+use tokio_core::net::TcpListener;
 use tokio_core::reactor::{Core, Handle};
 use url::{form_urlencoded, percent_encoding};
 use walkdir::{DirEntry, WalkDir};
@@ -60,7 +61,6 @@ impl io::Write for Pipe {
 }
 
 struct Archiver {
-    // root: Path,
 }
 
 impl Archiver {
@@ -122,8 +122,8 @@ impl Archiver {
 
 struct Server {
     handle: Handle,
-    fs_pool: Arc<FsPool>,
-    pool: Arc<CpuPool>,
+    fs_pool: FsPool,
+    pool: CpuPool,
 }
 
 impl Service for Server {
@@ -187,7 +187,7 @@ impl Service for Server {
                 }
             }
             Post => {
-                let pool = Arc::clone(&self.pool);
+                let pool = self.pool.clone();
                 let handle = self.handle.clone();
                 let b = req.body().concat2().and_then(move |b| {
                     use futures::future::FutureResult;
@@ -247,34 +247,54 @@ fn main() {
     let mut core = Core::new().unwrap();
     let handle = core.handle();
 
-    let handle1 = handle.clone();
-    let server = Http::new()
-        .serve_addr_handle(&addr, &handle, move || {
-            Ok(Server {
-                handle: handle1.clone(),
-                fs_pool: Arc::new(FsPool::new(4)),
-                pool: Arc::new(CpuPool::new_num_cpus()),
-            })
-        })
-        .unwrap();
-
-    println!(
-        "Listening on http://{} with 1 thread.",
-        server.incoming_ref().local_addr()
-    );
-
+    let listener = TcpListener::bind(&addr, &handle).unwrap();
 
     let handle1 = handle.clone();
-    handle.spawn(
-        server
-            .for_each(move |conn| {
-                handle1.spawn(conn.map(|_| ()).map_err(|err| println!("error: {:?}", err)));
-                Ok(())
-            })
-            .map_err(|_| ()),
-    );
 
-    core.run(future::empty::<(), ()>()).unwrap();
+    let fs_pool = FsPool::new(4);
+    let cpu_pool = CpuPool::new_num_cpus();
+
+    let handle1 = handle.clone();
+    let server = listener.incoming().for_each(move |(sock, addr)| {
+        let s = Server {
+            handle: handle1.clone(),
+            fs_pool: fs_pool.clone(),
+            pool: cpu_pool.clone(),
+        };
+
+        Http::new().bind_connection(&handle1, sock, addr, s);
+
+        Ok(())
+    });
+    core.run(server).unwrap();
+
+    // let server = Http::new()
+    //     .serve_addr_handle(&addr, &handle, move || {
+    //         Ok(Server {
+    //             handle: handle1.clone(),
+    //             fs_pool: Arc::new(FsPool::new(4)),
+    //             pool: Arc::new(CpuPool::new_num_cpus()),
+    //         })
+    //     })
+    //     .unwrap();
+
+    // println!(
+    //     "Listening on http://{} with 1 thread.",
+    //     server.incoming_ref().local_addr()
+    // );
+
+
+    // let handle1 = handle.clone();
+    // handle.spawn(
+    //     server
+    //         .for_each(move |conn| {
+    //             handle1.spawn(conn.map(|_| ()).map_err(|err| println!("error: {:?}", err)));
+    //             Ok(())
+    //         })
+    //         .map_err(|_| ()),
+    // );
+
+    // core.run(future::empty::<(), ()>()).unwrap();
 }
 
 #[derive(Debug)]
