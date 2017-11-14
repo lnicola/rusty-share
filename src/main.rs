@@ -135,9 +135,7 @@ impl Service for Server {
             .decode_utf8()
             .unwrap()
             .into_owned();
-        let path = Path::new(&path_);
-        let path = path.strip_prefix("/").unwrap();
-        let path = root.join(path);
+        let path = root.join(Path::new(&path_).strip_prefix("/").unwrap());
         let response = match *req.method() {
             Get => {
                 let metadata = fs::metadata(&path);
@@ -180,21 +178,36 @@ impl Service for Server {
                 let pool = self.pool.clone();
                 let handle = self.handle.clone();
                 let b = req.body().concat2().and_then(move |b| {
-                    let (tx, rx) = mpsc::channel(10);
+                    let mut files = Vec::new();
+                    for (name, value) in form_urlencoded::parse(&b) {
+                        if name == "selection[]" {
+                            let value = percent_encoding::percent_decode(value.as_bytes())
+                                .decode_utf8()
+                                .unwrap()
+                                .into_owned();
+                            files.push(value)
+                        } else {
+                            let response = Response::new().with_status(StatusCode::BadRequest);
+                            return Ok(response);
+                        }
+                    }
 
+                    let archive_name = match files.len() {
+                        0 => {
+                            files.push(String::from("."));
+                            (path_.clone() + ".tar").as_bytes().to_vec()
+                        }
+                        1 => (files[0].clone() + ".tar").as_bytes().to_vec(),
+                        _ => b"archive.tar".to_vec()
+                    };
+
+                    let (tx, rx) = mpsc::channel(10);
                     let f = pool.spawn_fn(move || {
                         let pipe = Pipe { dest: tx.wait() };
 
                         let mut archiver = Archiver::new(Builder::new(pipe));
-                        for (name, value) in form_urlencoded::parse(&b) {
-                            if name == "selection[]" {
-                                let value = percent_encoding::percent_decode(value.as_bytes())
-                                    .decode_utf8()
-                                    .unwrap()
-                                    .into_owned();
-
-                                archiver.add_to_archive(&path, Path::new(&value));
-                            }
+                        for file in files {
+                            archiver.add_to_archive(&path, &file);
                         }
 
                         future::ok::<_, ()>(())
@@ -209,7 +222,7 @@ impl Service for Server {
                                     DispositionParam::Filename(
                                         Charset::Iso_8859_1,
                                         None,
-                                        b"archive.tar".to_vec()
+                                        archive_name
                                     ),
                                 ],
                             })
