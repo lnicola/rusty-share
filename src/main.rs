@@ -238,7 +238,7 @@ impl Service for Server {
             }
         };
 
-        Box::new(self.pool.spawn(response))
+        response
     }
 }
 
