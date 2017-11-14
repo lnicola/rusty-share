@@ -18,9 +18,9 @@ use chrono_humanize::HumanTime;
 use chrono::{DateTime, Local, TimeZone};
 use futures_cpupool::CpuPool;
 use futures_fs::FsPool;
-use futures::{stream, Future, Sink, Stream};
-use futures::future::{self, FutureResult};
-use futures::sync::mpsc;
+use futures::{future, stream, Future, Sink, Stream};
+use futures::sink::Wait;
+use futures::sync::mpsc::{self, Sender};
 use hyper::{Get, Post, StatusCode};
 use hyper::header::{Charset, ContentDisposition, ContentLength, ContentType, DispositionParam,
                     DispositionType, Location};
@@ -28,9 +28,8 @@ use hyper::mime::{Mime, TEXT_HTML_UTF_8};
 use hyper::server::{Http, Request, Response, Service};
 use std::error;
 use std::ffi::OsString;
-use std::fmt::Write;
 use std::fs::{self, File};
-use std::io;
+use std::io::{self, ErrorKind, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
@@ -42,81 +41,77 @@ use url::{form_urlencoded, percent_encoding};
 use walkdir::{DirEntry, WalkDir};
 
 struct Pipe {
-    dest: futures::sink::Wait<futures::sync::mpsc::Sender<Bytes>>,
+    dest: Wait<Sender<Bytes>>,
 }
 
-impl io::Write for Pipe {
+impl Write for Pipe {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self.dest.send(Bytes::from(buf)) {
             Ok(_) => Ok(buf.len()),
-            Err(e) => Err(io::Error::new(io::ErrorKind::Interrupted, e)),
+            Err(e) => Err(io::Error::new(ErrorKind::Interrupted, e)),
         }
     }
 
     fn flush(&mut self) -> io::Result<()> {
         match self.dest.flush() {
             Ok(_) => Ok(()),
-            Err(e) => Err(io::Error::new(io::ErrorKind::Interrupted, e)),
+            Err(e) => Err(io::Error::new(ErrorKind::Interrupted, e)),
         }
     }
 }
 
-struct Archiver;
+struct Archiver<W: Write> {
+    builder: Builder<W>,
+}
 
-impl Archiver {
-    fn write_entry<W>(
-        &self,
-        root: &Path,
-        entry: &DirEntry,
-        builder: &mut Builder<W>,
-    ) -> std::result::Result<(), Box<error::Error>>
+impl<W: Write> Archiver<W> {
+    fn new(builder: Builder<W>) -> Self {
+        Self { builder }
+    }
+}
+
+impl<W: Write> Archiver<W> {
+    fn write_entry(&mut self, root: &Path, entry: &DirEntry) -> Result<(), Box<error::Error>>
     where
-        W: io::Write,
+        W: Write,
     {
-        let relative_path = try!(entry.path().strip_prefix(&root));
-        let metadata = try!(entry.metadata());
+        let relative_path = entry.path().strip_prefix(&root)?;
+        let metadata = entry.metadata()?;
         if metadata.is_dir() {
-            try!(builder.append_dir(&relative_path, &entry.path()));
+            self.builder.append_dir(&relative_path, &entry.path())?;
         } else {
-            let mut file = try!(File::open(&entry.path()));
-            try!(builder.append_file(&relative_path, &mut file));
+            let mut file = File::open(&entry.path())?;
+            self.builder.append_file(&relative_path, &mut file)?;
         }
 
         Ok(())
     }
 
-    fn add_to_archive<P, Q, W>(
-        &self,
-        root: P,
-        entry: Q,
-        builder: &mut Builder<W>,
-    ) -> std::io::Result<()>
+    fn add_to_archive<P, Q>(&mut self, root: P, entry: Q)
     where
         P: AsRef<Path>,
         Q: AsRef<Path>,
-        W: io::Write,
+        W: Write,
     {
         let walkdir = WalkDir::new(root.as_ref().join(&entry));
-        let entries = walkdir
-            .into_iter()
-            .filter_entry(|e| !Archiver::is_hidden(e));
+        let entries = walkdir.into_iter().filter_entry(|e| !Self::is_hidden(e));
         for e in entries {
-            if let Ok(e) = e {
-                if let Err(e) = self.write_entry(root.as_ref(), &e, builder) {
-                    println!("{:?}", e);
+            match e {
+                Ok(e) => {
+                    if let Err(e) = self.write_entry(root.as_ref(), &e) {
+                        println!("{}", e);
+                    }
                 }
-            } else {
-                println!("{:?}", e);
+                Err(e) => println!("{}", e),
             }
         }
-        Ok(())
     }
 
     fn is_hidden(entry: &DirEntry) -> bool {
-        entry
-            .file_name()
-            .to_str()
-            .map_or(true, |s| s.starts_with('.'))
+        entry.file_name().to_str().map_or(
+            true,
+            |s| s.starts_with('.'),
+        )
     }
 }
 
@@ -187,22 +182,22 @@ impl Service for Server {
                 let b = req.body().concat2().and_then(move |b| {
                     let (tx, rx) = mpsc::channel(10);
 
-                    let f = pool.spawn_fn(move || -> FutureResult<_, ()> {
+                    let f = pool.spawn_fn(move || {
                         let pipe = Pipe { dest: tx.wait() };
 
-                        let mut a = Builder::new(pipe);
-                        let archiver = Archiver;
-
+                        let mut archiver = Archiver::new(Builder::new(pipe));
                         for (name, value) in form_urlencoded::parse(&b) {
                             if name == "selection[]" {
-                                archiver
-                                    .add_to_archive(&path, Path::new(value.as_ref()), &mut a)
-                                    .unwrap();
+                                let value = percent_encoding::percent_decode(value.as_bytes())
+                                    .decode_utf8()
+                                    .unwrap()
+                                    .into_owned();
+
+                                archiver.add_to_archive(&path, Path::new(&value));
                             }
                         }
 
-
-                        future::ok(())
+                        future::ok::<_, ()>(())
                     });
                     handle.spawn(f);
 
@@ -214,7 +209,7 @@ impl Service for Server {
                                     DispositionParam::Filename(
                                         Charset::Iso_8859_1,
                                         None,
-                                        b"archive.tar".to_vec(),
+                                        b"archive.tar".to_vec()
                                     ),
                                 ],
                             })
@@ -243,7 +238,7 @@ fn main() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 3010);
     let listener = TcpListener::bind(&addr, &handle).unwrap();
 
-    let fs_pool = FsPool::new(4);
+    let fs_pool = FsPool::default();
     let cpu_pool = CpuPool::new_num_cpus();
 
     let server = listener.incoming().for_each(move |(sock, addr)| {
@@ -412,32 +407,27 @@ fn render_index(entries: &[ShareEntry]) -> String {
 </html>"#;
     let mut res = String::from(doc_header);
 
+    use std::fmt::Write;
     for entry in entries.iter() {
         let modified = HumanTime::from(entry.modified);
         let link = percent_encoding::percent_encode(
             entry.name.as_bytes(),
             percent_encoding::DEFAULT_ENCODE_SET,
         );
-        if entry.is_dir {
-            write!(
-                res,
-                r#"<tr><td><input name="selection[]" value="{}" type="checkbox"></td><td><a href="{}">{}</a></td><td></td><td>{}</td></tr>"#,
-                link,
-                link,
-                entry.name.to_string_lossy().into_owned(),
-                modified
-            ).unwrap();
+        let size = if entry.is_dir {
+            String::new()
         } else {
-            write!(
-                res,
-                r#"<tr><td><input name="selection[]" value="{}" type="checkbox"></td><td><a href="{}">{}</a></td><td>{}</td><td>{}</td></tr>"#,
-                link,
-                link,
-                entry.name.to_string_lossy().into_owned(),
-                ByteSize::b(entry.size as usize).to_string(false),
-                modified
-            ).unwrap();
-        }
+            ByteSize::b(entry.size as usize).to_string(false)
+        };
+        write!(
+            res,
+            r#"<tr><td><input name="selection[]" value="{}" type="checkbox"></td><td><a href="{}">{}</a></td><td>{}</td><td>{}</td></tr>"#,
+            link,
+            link,
+            entry.name.to_string_lossy().into_owned(),
+            size,
+            modified
+        ).unwrap();
     }
     res.push_str(doc_footer);
     res
