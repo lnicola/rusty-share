@@ -35,7 +35,6 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 use tar::Builder;
-use tokio_core::net::TcpListener;
 use tokio_core::reactor::{Core, Handle};
 use url::{form_urlencoded, percent_encoding};
 use walkdir::{DirEntry, WalkDir};
@@ -97,21 +96,19 @@ impl<W: Write> Archiver<W> {
         let entries = walkdir.into_iter().filter_entry(|e| !Self::is_hidden(e));
         for e in entries {
             match e {
-                Ok(e) => {
-                    if let Err(e) = self.write_entry(root.as_ref(), &e) {
-                        println!("{}", e);
-                    }
-                }
+                Ok(e) => if let Err(e) = self.write_entry(root.as_ref(), &e) {
+                    println!("{}", e);
+                },
                 Err(e) => println!("{}", e),
             }
         }
     }
 
     fn is_hidden(entry: &DirEntry) -> bool {
-        entry.file_name().to_str().map_or(
-            true,
-            |s| s.starts_with('.'),
-        )
+        entry
+            .file_name()
+            .to_str()
+            .map_or(true, |s| s.starts_with('.'))
     }
 }
 
@@ -136,7 +133,7 @@ impl Service for Server {
             .unwrap()
             .into_owned();
         let path = root.join(Path::new(&path_).strip_prefix("/").unwrap());
-        let response = match *req.method() {
+        match *req.method() {
             Get => {
                 let metadata = fs::metadata(&path);
                 if metadata.is_err() {
@@ -198,7 +195,7 @@ impl Service for Server {
                             (path_.clone() + ".tar").as_bytes().to_vec()
                         }
                         1 => (files[0].clone() + ".tar").as_bytes().to_vec(),
-                        _ => b"archive.tar".to_vec()
+                        _ => b"archive.tar".to_vec(),
                     };
 
                     let (tx, rx) = mpsc::channel(10);
@@ -222,7 +219,7 @@ impl Service for Server {
                                     DispositionParam::Filename(
                                         Charset::Iso_8859_1,
                                         None,
-                                        archive_name
+                                        archive_name,
                                     ),
                                 ],
                             })
@@ -230,15 +227,13 @@ impl Service for Server {
                             .with_body(Box::new(rx.map_err(|_| hyper::Error::Incomplete)) as Body),
                     )
                 });
-                return Box::new(b);
+                Box::new(b)
             }
             _ => {
                 let response = Response::new().with_status(StatusCode::MethodNotAllowed);
                 Box::new(future::ok(response))
             }
-        };
-
-        response
+        }
     }
 }
 
@@ -249,23 +244,31 @@ fn main() {
     let handle = core.handle();
 
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 3010);
-    let listener = TcpListener::bind(&addr, &handle).unwrap();
 
-    let fs_pool = FsPool::default();
+    let fs_pool = FsPool::new(4);
     let cpu_pool = CpuPool::new_num_cpus();
+    let handle1 = handle.clone();
+    let server = Http::new()
+        .serve_addr_handle(&addr, &handle, move || {
+            Ok(Server {
+                handle: handle1.clone(),
+                fs_pool: fs_pool.clone(),
+                pool: cpu_pool.clone(),
+            })
+        })
+        .unwrap();
 
-    let server = listener.incoming().for_each(move |(sock, addr)| {
-        let s = Server {
-            handle: handle.clone(),
-            fs_pool: fs_pool.clone(),
-            pool: cpu_pool.clone(),
-        };
+    let handle1 = handle.clone();
+    handle.spawn(
+        server
+            .for_each(move |conn| {
+                handle1.spawn(conn.map(|_| ()).map_err(|err| println!("error: {:?}", err)));
+                Ok(())
+            })
+            .map_err(|_| ()),
+    );
 
-        Http::new().bind_connection(&handle, sock, addr, s);
-
-        Ok(())
-    });
-    core.run(server).unwrap();
+    core.run(future::empty::<(), ()>()).unwrap();
 }
 
 #[derive(Debug)]
