@@ -7,6 +7,9 @@ extern crate futures_cpupool;
 extern crate futures_fs;
 extern crate hyper;
 extern crate pretty_env_logger;
+extern crate structopt;
+#[macro_use]
+extern crate structopt_derive;
 extern crate tar;
 extern crate tokio_core;
 extern crate url;
@@ -32,8 +35,9 @@ use std::fs::{self, File};
 use std::io::{self, ErrorKind, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::os::unix::ffi::OsStrExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
+use structopt::StructOpt;
 use tar::Builder;
 use tokio_core::reactor::{Core, Handle};
 use url::{form_urlencoded, percent_encoding};
@@ -112,7 +116,14 @@ impl<W: Write> Archiver<W> {
     }
 }
 
+#[derive(Clone, Debug, StructOpt)]
+struct Options {
+    #[structopt(short = "r", long = "root", help = "Root path", default_value = ".", parse(from_os_str))]
+    root: PathBuf
+}
+
 struct Server {
+    options: Options,
     handle: Handle,
     fs_pool: FsPool,
     pool: CpuPool,
@@ -127,7 +138,7 @@ impl Service for Server {
     fn call(&self, req: Request) -> Self::Future {
         type Body = Box<Stream<Item = Bytes, Error = hyper::Error> + Send>;
 
-        let root = Path::new(".");
+        let root = self.options.root.as_path();
         let path_ = percent_encoding::percent_decode(req.path().as_bytes())
             .decode_utf8()
             .unwrap()
@@ -240,6 +251,7 @@ impl Service for Server {
 fn main() {
     pretty_env_logger::init().unwrap();
 
+    let options = Options::from_args();
     let mut core = Core::new().unwrap();
     let handle = core.handle();
 
@@ -251,6 +263,7 @@ fn main() {
     let server = Http::new()
         .serve_addr_handle(&addr, &handle, move || {
             Ok(Server {
+                options: options.clone(),
                 handle: handle1.clone(),
                 fs_pool: fs_pool.clone(),
                 pool: cpu_pool.clone(),
