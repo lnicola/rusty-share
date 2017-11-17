@@ -163,17 +163,20 @@ impl Service for Server {
                                 .with_header(Location::new(path_.to_string() + "/"));
                             Box::new(future::ok(response))
                         } else {
-                            let entries = get_dir_index(&path).unwrap();
-                            let bytes = Bytes::from(render_index(entries));
-                            let len = bytes.len() as u64;
-                            let body = Box::new(stream::once(Ok(bytes))) as Body;
-                            let response = Response::new()
-                                .with_status(StatusCode::Ok)
-                                .with_header(ContentType(TEXT_HTML_UTF_8))
-                                .with_header(ContentLength(len))
-                                .with_body(body);
+                            let f = self.pool.spawn_fn(move || {
+                                let entries = get_dir_index(&path).unwrap();
+                                let bytes = Bytes::from(render_index(entries));
+                                let len = bytes.len() as u64;
+                                let body = Box::new(stream::once(Ok(bytes))) as Body;
+                                let response = Response::new()
+                                    .with_status(StatusCode::Ok)
+                                    .with_header(ContentType(TEXT_HTML_UTF_8))
+                                    .with_header(ContentLength(len))
+                                    .with_body(body);
 
-                            Box::new(future::ok(response))
+                                future::ok(response)
+                            });
+                            Box::new(f)
                         }
                     } else {
                         let body = Box::new(self.fs_pool.read(path).map_err(|e| e.into())) as Body;
