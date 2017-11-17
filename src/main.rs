@@ -32,7 +32,7 @@ use hyper::{Get, Post, StatusCode};
 use hyper::header::{Charset, ContentDisposition, ContentLength, ContentType, DispositionParam,
                     DispositionType, Location};
 use hyper::mime::{Mime, TEXT_HTML_UTF_8};
-use hyper::server::{Http, Request, Response, Service};
+use hyper::server::{self, Http, Request, Response, Service};
 use std::error;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
@@ -256,23 +256,20 @@ fn main() {
     pretty_env_logger::init().unwrap();
 
     let options = Options::from_args();
+
     let mut core = Core::new().unwrap();
     let handle = core.handle();
 
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 3010);
+    let server = Server {
+        options: options,
+        handle: handle.clone(),
+        fs_pool: FsPool::default(),
+        pool: CpuPool::new_num_cpus(),
+    };
 
-    let fs_pool = FsPool::new(4);
-    let cpu_pool = CpuPool::new_num_cpus();
-    let handle1 = handle.clone();
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 3010);
     let server = Http::new()
-        .serve_addr_handle(&addr, &handle, move || {
-            Ok(Server {
-                options: options.clone(),
-                handle: handle1.clone(),
-                fs_pool: fs_pool.clone(),
-                pool: cpu_pool.clone(),
-            })
-        })
+        .serve_addr_handle(&addr, &handle, server::const_service(server))
         .unwrap();
 
     let handle1 = handle.clone();
