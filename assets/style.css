@@ -1,0 +1,57 @@
+body {
+    padding: 20px;
+    font-family: sans-serif;
+}
+
+.view {
+    width: 100%;
+    border-left: 1px solid #ededed;
+    border-right: 1px solid #ededed;
+}
+
+table {
+    border-collapse: collapse;
+}
+
+col.selected {
+    width: 20px;
+}
+
+col.size {
+    width: 100px;
+    text-align: right;
+}
+
+col.date {
+    width: 200px;
+}
+
+tr {
+    border-bottom: 1px solid #ededed;
+}
+
+tr.header {
+    background-color: #fafafa;
+    border-top: 1px solid #ededed;
+}
+
+tr:hover {
+    background-color: #f0f0f0;
+}
+
+th {
+    font-weight: normal;
+}
+
+th,
+td {
+    padding: 8px;
+    text-align: left;
+}
+
+th:nth-child(3),
+th:nth-child(4),
+td:nth-child(3),
+td:nth-child(4) {
+    text-align: right;
+}

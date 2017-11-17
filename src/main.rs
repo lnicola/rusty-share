@@ -5,6 +5,8 @@ extern crate chrono_humanize;
 extern crate futures;
 extern crate futures_cpupool;
 extern crate futures_fs;
+#[macro_use]
+extern crate horrorshow;
 extern crate hyper;
 extern crate pretty_env_logger;
 extern crate structopt;
@@ -18,25 +20,26 @@ extern crate walkdir;
 use bytes::Bytes;
 use bytesize::ByteSize;
 use chrono_humanize::HumanTime;
-use chrono::{DateTime, Local, TimeZone};
+use chrono::{DateTime, Local};
 use futures_cpupool::CpuPool;
 use futures_fs::FsPool;
 use futures::{future, stream, Future, Sink, Stream};
 use futures::sink::Wait;
 use futures::sync::mpsc::{self, Sender};
+use horrorshow::prelude::*;
+use horrorshow::helper::doctype;
 use hyper::{Get, Post, StatusCode};
 use hyper::header::{Charset, ContentDisposition, ContentLength, ContentType, DispositionParam,
                     DispositionType, Location};
 use hyper::mime::{Mime, TEXT_HTML_UTF_8};
 use hyper::server::{Http, Request, Response, Service};
 use std::error;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::io::{self, ErrorKind, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
 use structopt::StructOpt;
 use tar::Builder;
 use tokio_core::reactor::{Core, Handle};
@@ -118,8 +121,9 @@ impl<W: Write> Archiver<W> {
 
 #[derive(Clone, Debug, StructOpt)]
 struct Options {
-    #[structopt(short = "r", long = "root", help = "Root path", default_value = ".", parse(from_os_str))]
-    root: PathBuf
+    #[structopt(short = "r", long = "root", help = "Root path", default_value = ".",
+                parse(from_os_str))]
+    root: PathBuf,
 }
 
 struct Server {
@@ -159,8 +163,8 @@ impl Service for Server {
                                 .with_header(Location::new(path_.to_string() + "/"));
                             Box::new(future::ok(response))
                         } else {
-                            let page = get_dir_index(&path).unwrap();
-                            let bytes = Bytes::from(page);
+                            let entries = get_dir_index(&path).unwrap();
+                            let bytes = Bytes::from(render_index(entries));
                             let len = bytes.len() as u64;
                             let body = Box::new(stream::once(Ok(bytes))) as Body;
                             let response = Response::new()
@@ -188,7 +192,7 @@ impl Service for Server {
                 let b = req.body().concat2().and_then(move |b| {
                     let mut files = Vec::new();
                     for (name, value) in form_urlencoded::parse(&b) {
-                        if name == "selection[]" {
+                        if name == "s" {
                             let value = percent_encoding::percent_decode(value.as_bytes())
                                 .decode_utf8()
                                 .unwrap()
@@ -289,202 +293,84 @@ struct ShareEntry {
     name: OsString,
     is_dir: bool,
     size: u64,
-    modified: DateTime<Local>,
+    date: DateTime<Local>,
 }
 
-impl ShareEntry {
-    fn new(name: OsString, is_dir: bool, size: u64, modified: DateTime<Local>) -> ShareEntry {
-        ShareEntry {
-            name: name,
-            is_dir: is_dir,
-            size: size,
-            modified: modified,
-        }
-    }
-}
-
-fn render_index(entries: &[ShareEntry]) -> String {
-    let doc_header = r#"<!DOCTYPE html>
-<html>
-<head>
-    <meta http-equiv="content-type" content="text/html; charset=UTF-8">
-    <script>
-        document.addEventListener("DOMContentLoaded", function () {
-            let rows = document.getElementsByTagName("tr");
-            let playlist = [];
-            for (let i = 2; i < rows.length; i++) {
-                let anchor = rows[i].children[1].children[0];
-                let entry = {
-                    title: anchor.innerText,
-                    href: anchor.href
-                };
-                if (entry.href.endsWith(".mp3") || entry.href.endsWith(".flac")) {
-                    playlist.push(entry);
+fn render_index(entries: Vec<ShareEntry>) -> String {
+    (html! {
+        : doctype::HTML;
+        html {
+            head {
+                script { : Raw(include_str!("../assets/player.js")) }
+                style { : Raw(include_str!("../assets/style.css")); }
+            }
+            body {
+                form(method="POST") {
+                    table(class="view") {
+                        colgroup {
+                            col(class="selected");
+                            col(class="name");
+                            col(class="size");
+                            col(class="date");
+                        }
+                        tr(class="header") {
+                            th;
+                            th { : Raw("Name") }
+                            th { : Raw("Size") }
+                            th { : Raw("Last modified") }
+                        }
+                        tr { td; td { a(href=Raw("..")) { : Raw("..") } } td; td; }
+                        @ for ShareEntry { mut name, is_dir, size, date } in entries {
+                            |tmpl| {
+                                let mut display_name = name;
+                                if is_dir {
+                                    display_name.push("/");
+                                }
+                                let link = percent_encoding::percent_encode(
+                                    display_name.as_bytes(),
+                                    percent_encoding::DEFAULT_ENCODE_SET,
+                                ).to_string();
+                                let name = display_name.to_string_lossy().into_owned();
+                                let size = ByteSize::b(size as usize).to_string(false);
+                                tmpl << html! {
+                                    tr {
+                                        td { input(name="s", value=Raw(&link), type="checkbox") }
+                                        td { a(href=Raw(&link)) { : name } }
+                                        @ if is_dir { td } else { td { : Raw(size) } }
+                                        td { : Raw(HumanTime::from(date).to_string()) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    input(type="submit", value="Download");
                 }
             }
-
-            if (playlist.length > 0) {
-                playlist.sort(function (a, b) {
-                    if (a.title < b.title) {
-                        return -1;
-                    } else if (a.title > b.title) {
-                        return 1;
-                    } else {
-                        return 0;
-                    }
-                });
-
-                let currentIndex = 0;
-                let title = document.createElement("p");
-                let titleText = document.createTextNode(playlist[0].title);
-                title.appendChild(titleText);
-                let audio = new Audio(playlist[0].href);
-                audio.controls = true;
-                audio.addEventListener("ended", function () {
-                    if (++currentIndex < playlist.length) {
-                        this.src = playlist[currentIndex].href;
-                        titleText.nodeValue = playlist[currentIndex].title;
-                        audio.play();
-                    }
-                });
-                document.body.appendChild(title);
-                document.body.appendChild(audio);
-            }
-        });
-    </script>
-
-    <style>
-        body {
-            padding: 20px;
-            font-family: sans-serif;
         }
-        .view {
-            width: 100%;
-            border-left: 1px solid #ededed;
-            border-right: 1px solid #ededed;
-        }
-        table {
-            border-collapse: collapse;
-        }
-        col.selected {
-            width: 20px;
-        }
-        col.size {
-            width: 100px;
-            text-align: right;
-        }
-        col.date {
-            width: 200px;
-        }
-        tr {
-            border-bottom: 1px solid #ededed;
-        }
-        tr.header {
-            background-color: #fafafa;
-            border-top: 1px solid #ededed;
-        }
-        tr:hover {
-            background-color: #f0f0f0;
-        }
-        th {
-            font-weight: normal;
-        }
-        th,td {
-            padding: 8px;
-            text-align: left;
-        }
-        th:nth-child(3) {
-            text-align: right;
-        }
-        th:nth-child(4) {
-            text-align: right;
-        }
-        td:nth-child(3) {
-            text-align: right;
-        }
-        td:nth-child(4) {
-            text-align: right;
-        }
-    </style>
-</head>
-<body>
-    <form method="POST">
-        <table class="view">
-            <colgroup>
-                <col class="selected" />
-                <col class="name" />
-                <col class="size" />
-                <col class="date" />
-            </colgroup>
-            <tr class="header">
-                <th></th>
-                <th>Name</th>
-                <th>Size</th>
-                <th>Last modified</th>
-            </tr>
-            <tr>
-                <td></td>
-                <td><a href="..">../</a></td>
-                <td></td>
-                <td></td>
-            </tr>
-            "#;
-    let doc_footer = r#"        </table>
-        <input type="submit" value="Download" />
-    </form>
-</body>
-</html>"#;
-    let mut res = String::from(doc_header);
-
-    use std::fmt::Write;
-    for entry in entries.iter() {
-        let modified = HumanTime::from(entry.modified);
-        let link = percent_encoding::percent_encode(
-            entry.name.as_bytes(),
-            percent_encoding::DEFAULT_ENCODE_SET,
-        );
-        let size = if entry.is_dir {
-            String::new()
-        } else {
-            ByteSize::b(entry.size as usize).to_string(false)
-        };
-        write!(
-            res,
-            r#"<tr><td><input name="selection[]" value="{}" type="checkbox"></td><td><a href="{}">{}</a></td><td>{}</td><td>{}</td></tr>"#,
-            link,
-            link,
-            entry.name.to_string_lossy().into_owned(),
-            size,
-            modified
-        ).unwrap();
-    }
-    res.push_str(doc_footer);
-    res
+    }).into_string()
+        .unwrap()
 }
 
-fn get_dir_index(path: &Path) -> io::Result<String> {
+fn get_dir_index(path: &Path) -> io::Result<Vec<ShareEntry>> {
     let mut entries = Vec::new();
     for file in fs::read_dir(&path)? {
         let entry = file?;
         let metadata = entry.metadata()?;
-        let mut file = entry.file_name();
-        if !(file.as_ref() as &Path).starts_with(".") {
-            let modified = metadata.modified()?;
-            let duration = modified.duration_since(UNIX_EPOCH).unwrap();
-            let datetime = Local.timestamp(duration.as_secs() as i64, duration.subsec_nanos());
-            if metadata.is_dir() {
-                file.push("/");
-            }
-            entries.push(ShareEntry::new(
-                file,
-                metadata.is_dir(),
-                metadata.len(),
-                datetime,
-            ));
+        let name = entry.file_name();
+        if !is_hidden(&name) {
+            entries.push(ShareEntry {
+                name,
+                is_dir: metadata.is_dir(),
+                size: metadata.len(),
+                date: metadata.modified()?.into(),
+            });
         }
     }
+    entries.sort_by_key(|e| (!e.is_dir, e.date));
 
-    entries.sort_by_key(|e| (!e.is_dir, e.modified));
+    Ok(entries)
+}
 
-    Ok(render_index(&entries))
+fn is_hidden(path: &OsStr) -> bool {
+    path.as_bytes().starts_with(b".")
 }
