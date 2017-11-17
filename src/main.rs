@@ -328,12 +328,15 @@ fn render_index(entries: Vec<ShareEntry>) -> String {
                                     percent_encoding::DEFAULT_ENCODE_SET,
                                 ).to_string();
                                 let name = display_name.to_string_lossy().into_owned();
-                                let size = ByteSize::b(size as usize).to_string(false);
                                 tmpl << html! {
                                     tr {
                                         td { input(name="s", value=Raw(&link), type="checkbox") }
                                         td { a(href=Raw(&link)) { : name } }
-                                        @ if is_dir { td } else { td { : Raw(size) } }
+                                        td {
+                                            @ if !is_dir {
+                                                : Raw(ByteSize::b(size as usize).to_string(false))
+                                            }
+                                        }
                                         td { : Raw(HumanTime::from(date).to_string()) }
                                     }
                                 }
