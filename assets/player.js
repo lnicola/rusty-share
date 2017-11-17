@@ -1,5 +1,8 @@
 document.addEventListener("DOMContentLoaded", function () {
     let rows = document.getElementsByTagName("tr");
+    if (rows.length > 50) {
+        return;
+    }
     let playlist = [];
     for (let i = 2; i < rows.length; i++) {
         let anchor = rows[i].children[1].children[0];
