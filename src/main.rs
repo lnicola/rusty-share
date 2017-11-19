@@ -138,14 +138,14 @@ struct Options {
     root: PathBuf,
 }
 
-struct Server {
+struct RustyShare {
     options: Options,
     handle: Handle,
     fs_pool: FsPool,
     pool: CpuPool,
 }
 
-impl Server {
+impl RustyShare {
     fn handle_get(
         &self,
         path: PathBuf,
@@ -206,7 +206,7 @@ impl Server {
     }
 }
 
-impl Service for Server {
+impl Service for RustyShare {
     type Request = Request;
     type Response = Response<Box<Stream<Item = Bytes, Error = Self::Error> + Send>>;
     type Error = hyper::Error;
@@ -296,15 +296,13 @@ impl Service for Server {
     }
 }
 
-fn main() {
-    pretty_env_logger::init().unwrap();
-
+fn run() -> Result<(), failure::Error> {
     let options = Options::from_args();
 
-    let mut core = Core::new().unwrap();
+    let mut core = Core::new().context("Unable to create the Core")?;
     let handle = core.handle();
 
-    let server = Server {
+    let server = RustyShare {
         options: options,
         handle: handle.clone(),
         fs_pool: FsPool::default(),
@@ -314,19 +312,22 @@ fn main() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 3010);
     let server = Http::new()
         .serve_addr_handle(&addr, &handle, server::const_service(server))
-        .unwrap();
+        .context("Unable to start server")?
+        .for_each(move |conn| {
+            handle.spawn(conn.map(|_| ()).map_err(|e| error!("{}", e)));
+            Ok(())
+        });
 
-    let handle1 = handle.clone();
-    handle.spawn(
-        server
-            .for_each(move |conn| {
-                handle1.spawn(conn.map(|_| ()).map_err(|err| println!("error: {:?}", err)));
-                Ok(())
-            })
-            .map_err(|_| ()),
-    );
+    core.run(server).context("Unable to run server")?;
+    Ok(())
+}
 
-    core.run(future::empty::<(), ()>()).unwrap();
+fn main() {
+    pretty_env_logger::init().expect("Unable to initialize logger");
+
+    if let Err(e) = run() {
+        error!("{}", e);
+    }
 }
 
 #[derive(Debug)]
