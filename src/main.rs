@@ -25,7 +25,7 @@ use bytes::Bytes;
 use bytesize::ByteSize;
 use chrono_humanize::HumanTime;
 use chrono::{DateTime, Local};
-use failure::ResultExt;
+use failure::{Error, ResultExt};
 use futures_cpupool::CpuPool;
 use futures_fs::FsPool;
 use futures::{future, stream, Future, Sink, Stream};
@@ -40,7 +40,6 @@ use hyper::mime::{Mime, TEXT_HTML_UTF_8};
 use hyper::server::{self, Http, Request, Response, Service};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
-use std::error;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::io::{self, ErrorKind, Write};
@@ -85,21 +84,34 @@ impl<W: Write> Archiver<W> {
 }
 
 impl<W: Write> Archiver<W> {
-    fn write_entry(
-        &mut self,
-        root: &Path,
-        entry: &walkdir::DirEntry,
-    ) -> Result<(), Box<error::Error>>
+    fn write_entry(&mut self, root: &Path, entry: &walkdir::DirEntry) -> Result<(), Error>
     where
         W: Write,
     {
-        let relative_path = entry.path().strip_prefix(&root)?;
-        let metadata = entry.metadata()?;
+        let metadata = entry.metadata().with_context(|_| {
+            format!("Unable to read metadata for {}", entry.path().display())
+        })?;
+        let relative_path = entry.path().strip_prefix(&root).with_context(|_| {
+            format!(
+                "Unable to make path {} relative from {}",
+                entry.path().display(),
+                root.display()
+            )
+        })?;
         if metadata.is_dir() {
-            self.builder.append_dir(&relative_path, &entry.path())?;
+            self.builder
+                .append_dir(&relative_path, entry.path())
+                .with_context(|_| {
+                    format!("Unable to add {} to archive", entry.path().display())
+                })?;
         } else {
-            let mut file = File::open(&entry.path())?;
-            self.builder.append_file(&relative_path, &mut file)?;
+            let mut file = File::open(&entry.path())
+                .with_context(|_| format!("Unable to open {}", entry.path().display()))?;
+            self.builder
+                .append_file(&relative_path, &mut file)
+                .with_context(|_| {
+                    format!("Unable to add {} to archive", entry.path().display())
+                })?;
         }
 
         Ok(())
@@ -116,9 +128,9 @@ impl<W: Write> Archiver<W> {
         for e in entries {
             match e {
                 Ok(e) => if let Err(e) = self.write_entry(root.as_ref(), &e) {
-                    println!("{}", e);
+                    error!("{}", e);
                 },
-                Err(e) => println!("{}", e),
+                Err(e) => error!("{}", e),
             }
         }
     }
@@ -127,7 +139,7 @@ impl<W: Write> Archiver<W> {
         entry
             .file_name()
             .to_str()
-            .map_or(true, |s| s.starts_with('.'))
+            .map_or(true, |s| s != "./." && s.starts_with('.'))
     }
 }
 
@@ -146,11 +158,7 @@ struct RustyShare {
 }
 
 impl RustyShare {
-    fn handle_get(
-        &self,
-        path: PathBuf,
-        path_: &str,
-    ) -> Result<<Self as Service>::Future, failure::Error> {
+    fn handle_get(&self, path: PathBuf, path_: &str) -> Result<<Self as Service>::Future, Error> {
         type Body = Box<Stream<Item = Bytes, Error = hyper::Error> + Send>;
         let metadata = fs::metadata(&path)
             .with_context(|_| format!("Unable to read metadata of {}", path.display()))?;
@@ -296,7 +304,7 @@ impl Service for RustyShare {
     }
 }
 
-fn run() -> Result<(), failure::Error> {
+fn run() -> Result<(), Error> {
     let options = Options::from_args();
 
     let mut core = Core::new().context("Unable to create the Core")?;
@@ -396,7 +404,7 @@ fn render_index(entries: Vec<ShareEntry>) -> String {
         .unwrap()
 }
 
-fn get_share_entry(entry: &fs::DirEntry) -> Result<Option<ShareEntry>, failure::Error> {
+fn get_share_entry(entry: &fs::DirEntry) -> Result<Option<ShareEntry>, Error> {
     let metadata = entry.metadata().with_context(|_| {
         format!("Unable to read metadata of {}", entry.path().display())
     })?;
@@ -419,7 +427,7 @@ fn get_share_entry(entry: &fs::DirEntry) -> Result<Option<ShareEntry>, failure::
     }
 }
 
-fn get_dir_index(path: &Path) -> Result<Vec<ShareEntry>, failure::Error> {
+fn get_dir_index(path: &Path) -> Result<Vec<ShareEntry>, Error> {
     let mut entries = fs::read_dir(&path)
         .with_context(|_| format!("Unable to read directory {}", path.display()))?
         .filter_map(|file| {
