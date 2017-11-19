@@ -2,6 +2,7 @@ extern crate bytes;
 extern crate bytesize;
 extern crate chrono;
 extern crate chrono_humanize;
+extern crate failure;
 extern crate futures;
 extern crate futures_cpupool;
 extern crate futures_fs;
@@ -24,6 +25,7 @@ use bytes::Bytes;
 use bytesize::ByteSize;
 use chrono_humanize::HumanTime;
 use chrono::{DateTime, Local};
+use failure::ResultExt;
 use futures_cpupool::CpuPool;
 use futures_fs::FsPool;
 use futures::{future, stream, Future, Sink, Stream};
@@ -50,7 +52,7 @@ use structopt::StructOpt;
 use tar::Builder;
 use tokio_core::reactor::{Core, Handle};
 use url::{form_urlencoded, percent_encoding};
-use walkdir::{DirEntry, WalkDir};
+use walkdir::WalkDir;
 
 struct Pipe {
     dest: Wait<Sender<Bytes>>,
@@ -83,7 +85,11 @@ impl<W: Write> Archiver<W> {
 }
 
 impl<W: Write> Archiver<W> {
-    fn write_entry(&mut self, root: &Path, entry: &DirEntry) -> Result<(), Box<error::Error>>
+    fn write_entry(
+        &mut self,
+        root: &Path,
+        entry: &walkdir::DirEntry,
+    ) -> Result<(), Box<error::Error>>
     where
         W: Write,
     {
@@ -117,7 +123,7 @@ impl<W: Write> Archiver<W> {
         }
     }
 
-    fn is_hidden(entry: &DirEntry) -> bool {
+    fn is_hidden(entry: &walkdir::DirEntry) -> bool {
         entry
             .file_name()
             .to_str()
@@ -139,6 +145,67 @@ struct Server {
     pool: CpuPool,
 }
 
+impl Server {
+    fn handle_get(
+        &self,
+        path: PathBuf,
+        path_: &str,
+    ) -> Result<<Self as Service>::Future, failure::Error> {
+        type Body = Box<Stream<Item = Bytes, Error = hyper::Error> + Send>;
+        let metadata = fs::metadata(&path)
+            .with_context(|_| format!("Unable to read metadata of {}", path.display()))?;
+        if metadata.is_dir() {
+            if !path_.ends_with('/') {
+                let response = Response::new()
+                    .with_status(StatusCode::Found)
+                    .with_header(Location::new(path_.to_string() + "/"));
+                Ok(Box::new(future::ok(response)))
+            } else {
+                let f = self.pool.spawn_fn(move || {
+                    let enumerate_start = Instant::now();
+                    let entries = get_dir_index(&path);
+                    let enumerate_time = Instant::now() - enumerate_start;
+                    let response = match entries {
+                        Ok(entries) => {
+                            let render_start = Instant::now();
+                            let rendered = render_index(entries);
+                            let render_time = Instant::now() - render_start;
+                            let bytes = Bytes::from(rendered);
+                            info!(
+                                "enumerate: {} ms, render: {} ms",
+                                enumerate_time.to_millis(),
+                                render_time.to_millis()
+                            );
+                            let len = bytes.len() as u64;
+                            let body = Box::new(stream::once(Ok(bytes))) as Body;
+                            Response::new()
+                                .with_status(StatusCode::Ok)
+                                .with_header(ContentType(TEXT_HTML_UTF_8))
+                                .with_header(ContentLength(len))
+                                .with_body(body)
+                        }
+                        Err(e) => {
+                            error!("{}", e);
+                            Response::new().with_status(StatusCode::InternalServerError)
+                        }
+                    };
+
+                    future::ok(response)
+                });
+                Ok(Box::new(f))
+            }
+        } else {
+            let body = Box::new(self.fs_pool.read(path).map_err(|e| e.into())) as Body;
+            let response = Response::new()
+                .with_status(StatusCode::Ok)
+                .with_header(ContentLength(metadata.len()))
+                .with_body(body);
+
+            Ok(Box::new(future::ok(response)))
+        }
+    }
+}
+
 impl Service for Server {
     type Request = Request;
     type Response = Response<Box<Stream<Item = Bytes, Error = Self::Error> + Send>>;
@@ -155,55 +222,14 @@ impl Service for Server {
             .into_owned();
         let path = root.join(Path::new(&path_).strip_prefix("/").unwrap());
         match *req.method() {
-            Get => {
-                let metadata = fs::metadata(&path);
-                if metadata.is_err() {
+            Get => match self.handle_get(path, &path_) {
+                Ok(response) => response,
+                Err(e) => {
+                    error!("{}", e);
                     let response = Response::new().with_status(StatusCode::InternalServerError);
                     Box::new(future::ok(response))
-                } else {
-                    let metadata = metadata.unwrap();
-                    if metadata.is_dir() {
-                        if !path_.ends_with('/') {
-                            let response = Response::new()
-                                .with_status(StatusCode::Found)
-                                .with_header(Location::new(path_.to_string() + "/"));
-                            Box::new(future::ok(response))
-                        } else {
-                            let f = self.pool.spawn_fn(move || {
-                                let start = Instant::now();
-                                let entries = get_dir_index(&path).unwrap();
-                                let enumerate_end = Instant::now();
-                                let bytes = Bytes::from(render_index(entries));
-                                let render_time = Instant::now() - enumerate_end;
-                                let enumerate_time = enumerate_end - start;
-                                info!(
-                                    "enumerate: {} ms, render: {} ms",
-                                    enumerate_time.to_millis(),
-                                    render_time.to_millis()
-                                );
-                                let len = bytes.len() as u64;
-                                let body = Box::new(stream::once(Ok(bytes))) as Body;
-                                let response = Response::new()
-                                    .with_status(StatusCode::Ok)
-                                    .with_header(ContentType(TEXT_HTML_UTF_8))
-                                    .with_header(ContentLength(len))
-                                    .with_body(body);
-
-                                future::ok(response)
-                            });
-                            Box::new(f)
-                        }
-                    } else {
-                        let body = Box::new(self.fs_pool.read(path).map_err(|e| e.into())) as Body;
-                        let response = Response::new()
-                            .with_status(StatusCode::Ok)
-                            .with_header(ContentLength(metadata.len()))
-                            .with_body(body);
-
-                        Box::new(future::ok(response))
-                    }
                 }
-            }
+            },
             Post => {
                 let pool = self.pool.clone();
                 let handle = self.handle.clone();
@@ -369,25 +395,46 @@ fn render_index(entries: Vec<ShareEntry>) -> String {
         .unwrap()
 }
 
-fn get_dir_index(path: &Path) -> io::Result<Vec<ShareEntry>> {
-    let mut entries = fs::read_dir(&path)?
-        .filter_map(|file| file.ok())
+fn get_share_entry(entry: &fs::DirEntry) -> Result<Option<ShareEntry>, failure::Error> {
+    let metadata = entry.metadata().with_context(|_| {
+        format!("Unable to read metadata of {}", entry.path().display())
+    })?;
+    let name = entry.file_name();
+    let date = metadata.modified().with_context(|_| {
+        format!(
+            "Unable to read last modified time of {}",
+            entry.path().display()
+        )
+    })?;
+    if !is_hidden(&name) {
+        Ok(Some(ShareEntry {
+            name,
+            is_dir: false,
+            size: metadata.len(),
+            date: date.into(),
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+fn get_dir_index(path: &Path) -> Result<Vec<ShareEntry>, failure::Error> {
+    let mut entries = fs::read_dir(&path)
+        .with_context(|_| format!("Unable to read directory {}", path.display()))?
+        .filter_map(|file| {
+            file.map_err(|e| {
+                error!("{}", e);
+                e
+            }).ok()
+        })
         .collect::<Vec<_>>()
         .into_par_iter()
-        .filter_map(|entry| {
-            entry.metadata().ok().and_then(|metadata| {
-                let name = entry.file_name();
-                if !is_hidden(&name) {
-                    Some(ShareEntry {
-                        name,
-                        is_dir: false,
-                        size: metadata.len(),
-                        date: metadata.modified().unwrap().into(),
-                    })
-                } else {
-                    None
-                }
-            })
+        .filter_map(|entry| match get_share_entry(&entry) {
+            Ok(e) => e,
+            Err(e) => {
+                error!("{}", e);
+                None
+            }
         })
         .collect::<Vec<_>>();
     entries.par_sort_unstable_by_key(|e| (!e.is_dir, e.date));
