@@ -409,7 +409,7 @@ fn get_share_entry(entry: &fs::DirEntry) -> Result<Option<ShareEntry>, failure::
     if !is_hidden(&name) {
         Ok(Some(ShareEntry {
             name,
-            is_dir: false,
+            is_dir: metadata.is_dir(),
             size: metadata.len(),
             date: date.into(),
         }))
