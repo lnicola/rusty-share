@@ -8,6 +8,8 @@ extern crate futures_fs;
 #[macro_use]
 extern crate horrorshow;
 extern crate hyper;
+#[macro_use]
+extern crate log;
 extern crate pretty_env_logger;
 extern crate rayon;
 extern crate structopt;
@@ -43,6 +45,7 @@ use std::io::{self, ErrorKind, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 use structopt::StructOpt;
 use tar::Builder;
 use tokio_core::reactor::{Core, Handle};
@@ -167,8 +170,17 @@ impl Service for Server {
                             Box::new(future::ok(response))
                         } else {
                             let f = self.pool.spawn_fn(move || {
+                                let start = Instant::now();
                                 let entries = get_dir_index(&path).unwrap();
+                                let enumerate_end = Instant::now();
                                 let bytes = Bytes::from(render_index(entries));
+                                let render_time = Instant::now() - enumerate_end;
+                                let enumerate_time = enumerate_end - start;
+                                info!(
+                                    "enumerate: {} ms, render: {} ms",
+                                    enumerate_time.to_millis(),
+                                    render_time.to_millis()
+                                );
                                 let len = bytes.len() as u64;
                                 let body = Box::new(stream::once(Ok(bytes))) as Body;
                                 let response = Response::new()
@@ -385,4 +397,14 @@ fn get_dir_index(path: &Path) -> io::Result<Vec<ShareEntry>> {
 
 fn is_hidden(path: &OsStr) -> bool {
     path.as_bytes().starts_with(b".")
+}
+
+trait DurationExt {
+    fn to_millis(&self) -> u64;
+}
+
+impl DurationExt for Duration {
+    fn to_millis(&self) -> u64 {
+        1000 * self.as_secs() + u64::from(self.subsec_nanos()) / (1000 * 1000)
+    }
 }
