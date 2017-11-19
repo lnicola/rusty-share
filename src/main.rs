@@ -9,6 +9,7 @@ extern crate futures_fs;
 extern crate horrorshow;
 extern crate hyper;
 extern crate pretty_env_logger;
+extern crate rayon;
 extern crate structopt;
 #[macro_use]
 extern crate structopt_derive;
@@ -33,6 +34,8 @@ use hyper::header::{Charset, ContentDisposition, ContentLength, ContentType, Dis
                     DispositionType, Location};
 use hyper::mime::{Mime, TEXT_HTML_UTF_8};
 use hyper::server::{self, Http, Request, Response, Service};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::slice::ParallelSliceMut;
 use std::error;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
@@ -355,21 +358,27 @@ fn render_index(entries: Vec<ShareEntry>) -> String {
 }
 
 fn get_dir_index(path: &Path) -> io::Result<Vec<ShareEntry>> {
-    let mut entries = Vec::new();
-    for file in fs::read_dir(&path)? {
-        let entry = file?;
-        let metadata = entry.metadata()?;
-        let name = entry.file_name();
-        if !is_hidden(&name) {
-            entries.push(ShareEntry {
-                name,
-                is_dir: metadata.is_dir(),
-                size: metadata.len(),
-                date: metadata.modified()?.into(),
-            });
-        }
-    }
-    entries.sort_by_key(|e| (!e.is_dir, e.date));
+    let mut entries = fs::read_dir(&path)?
+        .filter_map(|file| file.ok())
+        .collect::<Vec<_>>()
+        .into_par_iter()
+        .filter_map(|entry| {
+            entry.metadata().ok().and_then(|metadata| {
+                let name = entry.file_name();
+                if !is_hidden(&name) {
+                    Some(ShareEntry {
+                        name,
+                        is_dir: false,
+                        size: metadata.len(),
+                        date: metadata.modified().unwrap().into(),
+                    })
+                } else {
+                    None
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    entries.par_sort_unstable_by_key(|e| (!e.is_dir, e.date));
 
     Ok(entries)
 }
