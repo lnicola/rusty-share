@@ -256,13 +256,21 @@ impl Service for RustyShare {
                         }
                     }
 
+                    const DEFAULT_ARCHIVE_NAME: &[u8] = b"archive.tar";
                     let archive_name = match files.len() {
                         0 => {
                             files.push(String::from("."));
-                            (path_.clone() + ".tar").as_bytes().to_vec()
+                            if path_ == "/" {
+                                DEFAULT_ARCHIVE_NAME.to_vec()
+                            } else {
+                                (path_.clone() + ".tar").as_bytes().to_vec()
+                            }
                         }
-                        1 => (files[0].clone() + ".tar").as_bytes().to_vec(),
-                        _ => b"archive.tar".to_vec(),
+                        1 => {
+                            let s = files[0].trim_right_matches('/');
+                            (s.to_owned() + ".tar").as_bytes().to_vec()
+                        }
+                        _ => DEFAULT_ARCHIVE_NAME.to_vec(),
                     };
 
                     let (tx, rx) = mpsc::channel(10);
