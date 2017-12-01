@@ -21,7 +21,7 @@ extern crate tokio_core;
 extern crate url;
 extern crate walkdir;
 
-use bytes::Bytes;
+use bytes::{BufMut, Bytes, BytesMut};
 use bytesize::ByteSize;
 use chrono_humanize::HumanTime;
 use chrono::{DateTime, Local};
@@ -55,20 +55,32 @@ use walkdir::WalkDir;
 
 struct Pipe {
     dest: Wait<Sender<Bytes>>,
+    bytes: BytesMut,
+}
+
+impl Pipe {
+    fn new(destination: Wait<Sender<Bytes>>) -> Self {
+        Pipe {
+            dest: destination,
+            bytes: BytesMut::new(),
+        }
+    }
 }
 
 impl Write for Pipe {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        match self.dest.send(Bytes::from(buf)) {
+        self.bytes.reserve(buf.len());
+        self.bytes.put(buf);
+        match self.dest.send(self.bytes.take().into()) {
             Ok(_) => Ok(buf.len()),
-            Err(e) => Err(io::Error::new(ErrorKind::Interrupted, e)),
+            Err(e) => Err(io::Error::new(ErrorKind::UnexpectedEof, e)),
         }
     }
 
     fn flush(&mut self) -> io::Result<()> {
         match self.dest.flush() {
             Ok(_) => Ok(()),
-            Err(e) => Err(io::Error::new(ErrorKind::Interrupted, e)),
+            Err(e) => Err(io::Error::new(ErrorKind::UnexpectedEof, e)),
         }
     }
 }
@@ -279,7 +291,7 @@ impl Service for RustyShare {
 
                     let (tx, rx) = mpsc::channel(10);
                     let f = pool.spawn_fn(move || {
-                        let pipe = Pipe { dest: tx.wait() };
+                        let pipe = Pipe::new(tx.wait());
 
                         let mut archiver = Archiver::new(Builder::new(pipe));
                         for file in files {
