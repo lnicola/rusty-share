@@ -203,7 +203,11 @@ impl RustyShare {
                 Ok(Box::new(f))
             }
         } else {
-            let body = Box::new(self.fs_pool.read(path).map_err(|e| e.into())) as Body;
+            let body = Box::new(
+                self.fs_pool
+                    .read(path, Default::default())
+                    .map_err(|e| e.into()),
+            ) as Body;
             let response = Response::new()
                 .with_status(StatusCode::Ok)
                 .with_header(ContentLength(metadata.len()))
