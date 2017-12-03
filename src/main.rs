@@ -1,9 +1,12 @@
+#![feature(proc_macro, conservative_impl_trait, generators)]
+
 extern crate bytes;
 extern crate bytesize;
 extern crate chrono;
 extern crate chrono_humanize;
 extern crate failure;
-extern crate futures;
+extern crate futures_await as futures;
+// extern crate futures;
 extern crate futures_cpupool;
 extern crate futures_fs;
 #[macro_use]
@@ -29,6 +32,7 @@ use failure::{Error, ResultExt};
 use futures_cpupool::CpuPool;
 use futures_fs::FsPool;
 use futures::{future, stream, Future, Sink, Stream};
+use futures::prelude::*;
 use futures::sink::Wait;
 use futures::sync::mpsc::{self, Sender};
 use horrorshow::prelude::*;
@@ -172,6 +176,7 @@ struct RustyShare {
 impl RustyShare {
     fn handle_get(&self, path: PathBuf, path_: &str) -> Result<<Self as Service>::Future, Error> {
         type Body = Box<Stream<Item = Bytes, Error = hyper::Error> + Send>;
+
         let metadata = fs::metadata(&path)
             .with_context(|_| format!("Unable to read metadata of {}", path.display()))?;
         if metadata.is_dir() {
@@ -228,6 +233,80 @@ impl RustyShare {
             Ok(Box::new(future::ok(response)))
         }
     }
+
+    fn handle_post(&self, req: Request, path: PathBuf, path_: String) -> <Self as Service>::Future {
+        type Body = Box<Stream<Item = Bytes, Error = hyper::Error> + Send>;
+
+        let pool = self.pool.clone();
+        let handle = self.handle.clone();
+        let b = async_block! {
+            let b = await!(req.body().concat2())?;
+            let mut files = Vec::new();
+            for (name, value) in form_urlencoded::parse(&b) {
+                if name == "s" {
+                    let value = percent_encoding::percent_decode(value.as_bytes())
+                        .decode_utf8()
+                        .unwrap()
+                        .into_owned();
+                    files.push(value)
+                } else {
+                    let response = Response::new().with_status(StatusCode::BadRequest);
+                    return Ok(response);
+                }
+            }
+
+            let archive_name = Self::get_archive_name(&path_, &mut files);
+
+            let (tx, rx) = mpsc::channel(10);
+            let f = pool.spawn_fn(move || {
+                let pipe = Pipe::new(tx.wait());
+
+                let mut archiver = Archiver::new(Builder::new(pipe));
+                for file in files {
+                    archiver.add_to_archive(&path, &file);
+                }
+
+                future::ok::<_, ()>(())
+            });
+            handle.spawn(f);
+
+            Ok(
+                Response::new()
+                    .with_header(ContentDisposition {
+                        disposition: DispositionType::Attachment,
+                        parameters: vec![
+                            DispositionParam::Filename(
+                                Charset::Iso_8859_1,
+                                None,
+                                archive_name,
+                            ),
+                        ],
+                    })
+                    .with_header(ContentType("application/x-tar".parse::<Mime>().unwrap()))
+                    .with_body(Box::new(rx.map_err(|_| hyper::Error::Incomplete)) as Body),
+            )
+        };
+        Box::new(b)
+    }
+
+    fn get_archive_name(path_: &str, files: &mut Vec<String>) -> Vec<u8> {
+        const DEFAULT_ARCHIVE_NAME: &[u8] = b"archive.tar";
+        match files.len() {
+            0 => {
+                files.push(String::from("."));
+                if path_ == "/" {
+                    DEFAULT_ARCHIVE_NAME.to_vec()
+                } else {
+                    (path_.to_owned() + ".tar").as_bytes().to_vec()
+                }
+            }
+            1 => {
+                let s = files[0].trim_right_matches('/');
+                (s.to_owned() + ".tar").as_bytes().to_vec()
+            }
+            _ => DEFAULT_ARCHIVE_NAME.to_vec(),
+        }
+    }
 }
 
 impl Service for RustyShare {
@@ -237,8 +316,6 @@ impl Service for RustyShare {
     type Future = Box<Future<Item = Self::Response, Error = Self::Error>>;
 
     fn call(&self, req: Request) -> Self::Future {
-        type Body = Box<Stream<Item = Bytes, Error = hyper::Error> + Send>;
-
         let root = self.options.root.as_path();
         let path_ = percent_encoding::percent_decode(req.path().as_bytes())
             .decode_utf8()
@@ -254,72 +331,7 @@ impl Service for RustyShare {
                     Box::new(future::ok(response))
                 }
             },
-            Post => {
-                let pool = self.pool.clone();
-                let handle = self.handle.clone();
-                let b = req.body().concat2().and_then(move |b| {
-                    let mut files = Vec::new();
-                    for (name, value) in form_urlencoded::parse(&b) {
-                        if name == "s" {
-                            let value = percent_encoding::percent_decode(value.as_bytes())
-                                .decode_utf8()
-                                .unwrap()
-                                .into_owned();
-                            files.push(value)
-                        } else {
-                            let response = Response::new().with_status(StatusCode::BadRequest);
-                            return Ok(response);
-                        }
-                    }
-
-                    const DEFAULT_ARCHIVE_NAME: &[u8] = b"archive.tar";
-                    let archive_name = match files.len() {
-                        0 => {
-                            files.push(String::from("."));
-                            if path_ == "/" {
-                                DEFAULT_ARCHIVE_NAME.to_vec()
-                            } else {
-                                (path_.clone() + ".tar").as_bytes().to_vec()
-                            }
-                        }
-                        1 => {
-                            let s = files[0].trim_right_matches('/');
-                            (s.to_owned() + ".tar").as_bytes().to_vec()
-                        }
-                        _ => DEFAULT_ARCHIVE_NAME.to_vec(),
-                    };
-
-                    let (tx, rx) = mpsc::channel(10);
-                    let f = pool.spawn_fn(move || {
-                        let pipe = Pipe::new(tx.wait());
-
-                        let mut archiver = Archiver::new(Builder::new(pipe));
-                        for file in files {
-                            archiver.add_to_archive(&path, &file);
-                        }
-
-                        future::ok::<_, ()>(())
-                    });
-                    handle.spawn(f);
-
-                    Ok(
-                        Response::new()
-                            .with_header(ContentDisposition {
-                                disposition: DispositionType::Attachment,
-                                parameters: vec![
-                                    DispositionParam::Filename(
-                                        Charset::Iso_8859_1,
-                                        None,
-                                        archive_name,
-                                    ),
-                                ],
-                            })
-                            .with_header(ContentType("application/x-tar".parse::<Mime>().unwrap()))
-                            .with_body(Box::new(rx.map_err(|_| hyper::Error::Incomplete)) as Body),
-                    )
-                });
-                Box::new(b)
-            }
+            Post => self.handle_post(req, path, path_),
             _ => {
                 let response = Response::new().with_status(StatusCode::MethodNotAllowed);
                 Box::new(future::ok(response))
