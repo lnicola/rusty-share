@@ -48,6 +48,7 @@ use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::io::{self, ErrorKind, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+#[cfg(not(target_os = "windows"))]
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -56,6 +57,21 @@ use tar::Builder;
 use tokio_core::reactor::{Core, Handle};
 use url::{form_urlencoded, percent_encoding};
 use walkdir::WalkDir;
+
+#[cfg(target_os = "windows")]
+pub trait OsStrExt3 {
+    fn from_bytes(b: &[u8]) -> &Self;
+    fn as_bytes(&self) -> &[u8];
+}
+
+#[cfg(target_os = "windows")]
+impl OsStrExt3 for OsStr {
+    fn from_bytes(b: &[u8]) -> &Self {
+        use std::mem;
+        unsafe { mem::transmute(b) }
+    }
+    fn as_bytes(&self) -> &[u8] { self.to_str().map(|s| s.as_bytes()).unwrap() }
+}
 
 struct Pipe {
     dest: Wait<Sender<Bytes>>,
