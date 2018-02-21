@@ -8,17 +8,16 @@ extern crate failure;
 extern crate futures_await as futures;
 // extern crate futures;
 extern crate futures_cpupool;
-extern crate futures_fs;
 #[macro_use]
 extern crate horrorshow;
+extern crate http_serve;
 extern crate hyper;
 #[macro_use]
 extern crate log;
+extern crate mime_sniffer;
 extern crate pretty_env_logger;
 extern crate rayon;
 extern crate structopt;
-#[macro_use]
-extern crate structopt_derive;
 extern crate tar;
 extern crate tokio_core;
 extern crate url;
@@ -30,13 +29,14 @@ use chrono_humanize::HumanTime;
 use chrono::{DateTime, Local};
 use failure::{Error, ResultExt};
 use futures_cpupool::CpuPool;
-use futures_fs::FsPool;
 use futures::{future, stream, Future, Sink, Stream};
 use futures::prelude::*;
 use futures::sink::Wait;
 use futures::sync::mpsc::{self, Sender};
 use horrorshow::prelude::*;
 use horrorshow::helper::doctype;
+use http_serve::ChunkedReadFile;
+use mime_sniffer::MimeTypeSniffer;
 use hyper::{Get, Post, StatusCode};
 use hyper::header::{Charset, ContentDisposition, ContentLength, ContentType, DispositionParam,
                     DispositionType, Location};
@@ -46,11 +46,12 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
-use std::io::{self, ErrorKind, Write};
+use std::io::{self, ErrorKind, Read, Seek, SeekFrom, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 #[cfg(not(target_os = "windows"))]
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::time::{Duration, Instant};
 use structopt::StructOpt;
 use tar::Builder;
@@ -70,7 +71,9 @@ impl OsStrExt3 for OsStr {
         use std::mem;
         unsafe { mem::transmute(b) }
     }
-    fn as_bytes(&self) -> &[u8] { self.to_str().map(|s| s.as_bytes()).unwrap() }
+    fn as_bytes(&self) -> &[u8] {
+        self.to_str().map(|s| s.as_bytes()).unwrap()
+    }
 }
 
 struct Pipe {
@@ -120,9 +123,9 @@ impl<W: Write> Archiver<W> {
     where
         W: Write,
     {
-        let metadata = entry.metadata().with_context(|_| {
-            format!("Unable to read metadata for {}", entry.path().display())
-        })?;
+        let metadata = entry
+            .metadata()
+            .with_context(|_| format!("Unable to read metadata for {}", entry.path().display()))?;
         let relative_path = entry.path().strip_prefix(&root).with_context(|_| {
             format!(
                 "Unable to make path {} relative from {}",
@@ -133,17 +136,13 @@ impl<W: Write> Archiver<W> {
         if metadata.is_dir() {
             self.builder
                 .append_dir(&relative_path, entry.path())
-                .with_context(|_| {
-                    format!("Unable to add {} to archive", entry.path().display())
-                })?;
+                .with_context(|_| format!("Unable to add {} to archive", entry.path().display()))?;
         } else {
             let mut file = File::open(&entry.path())
                 .with_context(|_| format!("Unable to open {}", entry.path().display()))?;
             self.builder
                 .append_file(&relative_path, &mut file)
-                .with_context(|_| {
-                    format!("Unable to add {} to archive", entry.path().display())
-                })?;
+                .with_context(|_| format!("Unable to add {} to archive", entry.path().display()))?;
         }
 
         Ok(())
@@ -185,12 +184,16 @@ struct Options {
 struct RustyShare {
     options: Options,
     handle: Handle,
-    fs_pool: FsPool,
     pool: CpuPool,
 }
 
 impl RustyShare {
-    fn handle_get(&self, path: PathBuf, path_: &str) -> Result<<Self as Service>::Future, Error> {
+    fn handle_get(
+        &self,
+        req: Request,
+        path: PathBuf,
+        path_: &str,
+    ) -> Result<<Self as Service>::Future, Error> {
         type Body = Box<Stream<Item = Bytes, Error = hyper::Error> + Send>;
 
         let metadata = fs::metadata(&path)
@@ -236,17 +239,18 @@ impl RustyShare {
                 Ok(Box::new(f))
             }
         } else {
-            let body = Box::new(
-                self.fs_pool
-                    .read(path, Default::default())
-                    .map_err(|e| e.into()),
-            ) as Body;
-            let response = Response::new()
-                .with_status(StatusCode::Ok)
-                .with_header(ContentLength(metadata.len()))
-                .with_body(body);
-
-            Ok(Box::new(future::ok(response)))
+            let pool_clone = self.pool.clone();
+            Ok(Box::new(self.pool.spawn_fn(move || {
+                let mut f = File::open(&path)?;
+                let mut buf = [0; 16];
+                let len = f.read(&mut buf)?;
+                let buf = &buf[0..len];
+                f.seek(SeekFrom::Start(0))?;
+                let mime = buf.sniff_mime_type()
+                    .and_then(|mime| Mime::from_str(mime).ok());
+                let f = ChunkedReadFile::new(f, Some(pool_clone), mime)?;
+                Ok(http_serve::serve(f, &req))
+            })))
         }
     }
 
@@ -339,7 +343,7 @@ impl Service for RustyShare {
             .into_owned();
         let path = root.join(Path::new(&path_).strip_prefix("/").unwrap());
         match *req.method() {
-            Get => match self.handle_get(path, &path_) {
+            Get => match self.handle_get(req, path, &path_) {
                 Ok(response) => response,
                 Err(e) => {
                     error!("{}", e);
@@ -365,7 +369,6 @@ fn run() -> Result<(), Error> {
     let server = RustyShare {
         options: options,
         handle: handle.clone(),
-        fs_pool: FsPool::default(),
         pool: CpuPool::new_num_cpus(),
     };
 
@@ -383,7 +386,7 @@ fn run() -> Result<(), Error> {
 }
 
 fn main() {
-    pretty_env_logger::init().expect("Unable to initialize logger");
+    pretty_env_logger::init();
 
     if let Err(e) = run() {
         error!("{}", e);
@@ -457,9 +460,9 @@ fn render_index(entries: Vec<ShareEntry>) -> String {
 }
 
 fn get_share_entry(entry: &fs::DirEntry) -> Result<Option<ShareEntry>, Error> {
-    let metadata = entry.metadata().with_context(|_| {
-        format!("Unable to read metadata of {}", entry.path().display())
-    })?;
+    let metadata = entry
+        .metadata()
+        .with_context(|_| format!("Unable to read metadata of {}", entry.path().display()))?;
     let name = entry.file_name();
     let date = metadata.modified().with_context(|_| {
         format!(
