@@ -239,7 +239,6 @@ impl RustyShare {
                 Ok(Box::new(f))
             }
         } else {
-            let pool_clone = self.pool.clone();
             Ok(Box::new(self.pool.spawn_fn(move || {
                 let mut f = File::open(&path)?;
                 let mut buf = [0; 16];
@@ -248,7 +247,7 @@ impl RustyShare {
                 f.seek(SeekFrom::Start(0))?;
                 let mime = buf.sniff_mime_type()
                     .and_then(|mime| Mime::from_str(mime).ok());
-                let f = ChunkedReadFile::new(f, Some(pool_clone), mime)?;
+                let f = ChunkedReadFile::new(f, None, mime)?;
                 Ok(http_serve::serve(f, &req))
             })))
         }

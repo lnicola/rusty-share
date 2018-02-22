@@ -305,7 +305,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "http-serve"
 version = "0.0.1"
-source = "git+https://github.com/lnicola/http-serve/?branch=optional-content-type#24fc64e4a4aab9ac86fd5da4bbafbcbeb0edcca7"
+source = "git+https://github.com/lnicola/http-serve/?branch=fs-block-size#72d72748b4135228f30cf56664b0cfca88edc825"
 dependencies = [
  "flate2 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.18 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -687,7 +687,7 @@ dependencies = [
  "futures-await 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures-cpupool 0.1.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "horrorshow 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "http-serve 0.0.1 (git+https://github.com/lnicola/http-serve/?branch=optional-content-type)",
+ "http-serve 0.0.1 (git+https://github.com/lnicola/http-serve/?branch=fs-block-size)",
  "hyper 0.11.19 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "mime-sniffer 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -1090,7 +1090,7 @@ dependencies = [
 "checksum futures-await-synom 0.12.0 (registry+https://github.com/rust-lang/crates.io-index)" = "a7c84de0ba04a67d7fc0fb4e3218ba539da65890549922d9d2bc874ba6240030"
 "checksum futures-cpupool 0.1.8 (registry+https://github.com/rust-lang/crates.io-index)" = "ab90cde24b3319636588d0c35fe03b1333857621051837ed769faefb4c2162e4"
 "checksum horrorshow 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)" = "d587765115bf4e613f0c88e3fcad077dc9b1a339de89912f6a75f21049938bce"
-"checksum http-serve 0.0.1 (git+https://github.com/lnicola/http-serve/?branch=optional-content-type)" = "<none>"
+"checksum http-serve 0.0.1 (git+https://github.com/lnicola/http-serve/?branch=fs-block-size)" = "<none>"
 "checksum httparse 1.2.4 (registry+https://github.com/rust-lang/crates.io-index)" = "c2f407128745b78abc95c0ffbe4e5d37427fdc0d45470710cfef8c44522a2e37"
 "checksum hyper 0.11.19 (registry+https://github.com/rust-lang/crates.io-index)" = "47659bb1cb7ef3cd7b4f9bd2a11349b8d92097d34f9597a3c09e9bcefaf92b61"
 "checksum idna 0.1.4 (registry+https://github.com/rust-lang/crates.io-index)" = "014b298351066f1512874135335d62a789ffe78a9974f94b43ed5621951eaf7d"
