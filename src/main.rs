@@ -316,7 +316,9 @@ impl RustyShare {
                 if path_ == "/" {
                     DEFAULT_ARCHIVE_NAME.to_vec()
                 } else {
-                    (path_.to_owned() + ".tar").as_bytes().to_vec()
+                    let path_ = path_.trim_right_matches('/');
+                    let pos = path_.rfind('/').unwrap();
+                    (path_[pos + 1..].to_owned() + ".tar").as_bytes().to_vec()
                 }
             }
             1 => {
