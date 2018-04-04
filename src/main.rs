@@ -1,15 +1,15 @@
-#![feature(proc_macro, conservative_impl_trait, generators)]
+#![feature(proc_macro, generators)]
 
 extern crate bytes;
 extern crate bytesize;
 extern crate chrono;
 extern crate chrono_humanize;
 extern crate failure;
-extern crate futures_await as futures;
-// extern crate futures;
+extern crate futures;
 extern crate futures_cpupool;
 #[macro_use]
 extern crate horrorshow;
+extern crate http;
 extern crate http_serve;
 extern crate hyper;
 #[macro_use]
@@ -25,23 +25,24 @@ extern crate walkdir;
 
 use bytes::{BufMut, Bytes, BytesMut};
 use bytesize::ByteSize;
-use chrono_humanize::HumanTime;
 use chrono::{DateTime, Local};
+use chrono_humanize::HumanTime;
 use failure::{Error, ResultExt};
-use futures_cpupool::CpuPool;
-use futures::{future, stream, Future, Sink, Stream};
-use futures::prelude::*;
 use futures::sink::Wait;
 use futures::sync::mpsc::{self, Sender};
-use horrorshow::prelude::*;
+use futures::{future, stream, Future, Sink, Stream};
+use futures_cpupool::CpuPool;
 use horrorshow::helper::doctype;
+use horrorshow::prelude::*;
+use http::HeaderMap;
+use http::header::CONTENT_TYPE;
 use http_serve::ChunkedReadFile;
-use mime_sniffer::MimeTypeSniffer;
-use hyper::{Get, Post, StatusCode};
 use hyper::header::{Charset, ContentDisposition, ContentLength, ContentType, DispositionParam,
                     DispositionType, Location};
 use hyper::mime::{Mime, TEXT_HTML_UTF_8};
 use hyper::server::{self, Http, Request, Response, Service};
+use hyper::{Get, Post, StatusCode};
+use mime_sniffer::MimeTypeSniffer;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
 use std::ffi::{OsStr, OsString};
@@ -51,7 +52,6 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 #[cfg(not(target_os = "windows"))]
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 use std::time::{Duration, Instant};
 use structopt::StructOpt;
 use tar::Builder;
@@ -245,9 +245,11 @@ impl RustyShare {
                 let len = f.read(&mut buf)?;
                 let buf = &buf[0..len];
                 f.seek(SeekFrom::Start(0))?;
-                let mime = buf.sniff_mime_type()
-                    .and_then(|mime| Mime::from_str(mime).ok());
-                let f = ChunkedReadFile::new(f, None, mime)?;
+                let mut headers = HeaderMap::new();
+                if let Some(mime) = buf.sniff_mime_type() {
+                    headers.insert(CONTENT_TYPE, mime.parse().unwrap());
+                }
+                let f = ChunkedReadFile::new(f, None, headers)?;
                 Ok(http_serve::serve(f, &req))
             })))
         }
@@ -258,8 +260,7 @@ impl RustyShare {
 
         let pool = self.pool.clone();
         let handle = self.handle.clone();
-        let b = async_block! {
-            let b = await!(req.body().concat2())?;
+        let b = req.body().concat2().and_then(move |b| {
             let mut files = Vec::new();
             for (name, value) in form_urlencoded::parse(&b) {
                 if name == "s" {
@@ -289,22 +290,16 @@ impl RustyShare {
             });
             handle.spawn(f);
 
-            Ok(
-                Response::new()
-                    .with_header(ContentDisposition {
-                        disposition: DispositionType::Attachment,
-                        parameters: vec![
-                            DispositionParam::Filename(
-                                Charset::Iso_8859_1,
-                                None,
-                                archive_name,
-                            ),
-                        ],
-                    })
-                    .with_header(ContentType("application/x-tar".parse::<Mime>().unwrap()))
-                    .with_body(Box::new(rx.map_err(|_| hyper::Error::Incomplete)) as Body),
-            )
-        };
+            Ok(Response::new()
+                .with_header(ContentDisposition {
+                    disposition: DispositionType::Attachment,
+                    parameters: vec![
+                        DispositionParam::Filename(Charset::Iso_8859_1, None, archive_name),
+                    ],
+                })
+                .with_header(ContentType("application/x-tar".parse::<Mime>().unwrap()))
+                .with_body(Box::new(rx.map_err(|_| hyper::Error::Incomplete)) as Body))
+        });
         Box::new(b)
     }
 
@@ -368,7 +363,7 @@ fn run() -> Result<(), Error> {
     let handle = core.handle();
 
     let server = RustyShare {
-        options: options,
+        options,
         handle: handle.clone(),
         pool: CpuPool::new_num_cpus(),
     };
@@ -443,7 +438,7 @@ fn render_index(entries: Vec<ShareEntry>) -> String {
                                         td { a(href=Raw(&link)) { : name } }
                                         td {
                                             @ if !is_dir {
-                                                : Raw(ByteSize::b(size as usize).to_string(false))
+                                                : Raw(ByteSize::b(size).to_string(false))
                                             }
                                         }
                                         td { : Raw(HumanTime::from(date).to_string()) }
