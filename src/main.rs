@@ -45,6 +45,7 @@ use hyper::{Get, Post, StatusCode};
 use mime_sniffer::MimeTypeSniffer;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
+use std::borrow::Cow;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::io::{self, ErrorKind, Read, Seek, SeekFrom, Write};
@@ -118,6 +119,34 @@ impl<W: Write> Archiver<W> {
     }
 }
 
+#[cfg(windows)]
+pub fn path2bytes(p: &Path) -> io::Result<Cow<[u8]>> {
+    p.as_os_str()
+        .to_str()
+        .map(|s| s.as_bytes())
+        .ok_or_else(|| other(&format!("path {} was not valid unicode", p.display())))
+        .map(|bytes| {
+            if bytes.contains(&b'\\') {
+                // Normalize to Unix-style path separators
+                let mut bytes = bytes.to_owned();
+                for b in &mut bytes {
+                    if *b == b'\\' {
+                        *b = b'/';
+                    }
+                }
+                Cow::Owned(bytes)
+            } else {
+                Cow::Borrowed(bytes)
+            }
+        })
+}
+
+#[cfg(any(unix, target_os = "redox"))]
+/// On unix this will never fail
+pub fn path2bytes(p: &Path) -> io::Result<Cow<[u8]>> {
+    Ok(p.as_os_str().as_bytes()).map(Cow::Borrowed)
+}
+
 impl<W: Write> Archiver<W> {
     fn write_entry(&mut self, root: &Path, entry: &walkdir::DirEntry) -> Result<(), Error>
     where
@@ -146,6 +175,59 @@ impl<W: Write> Archiver<W> {
         }
 
         Ok(())
+    }
+
+    fn entry_size(&mut self, root: &Path, entry: &walkdir::DirEntry) -> Result<u64, Error>
+    where
+        W: Write,
+    {
+        let metadata = entry
+            .metadata()
+            .with_context(|_| format!("Unable to read metadata for {}", entry.path().display()))?;
+        let relative_path = entry.path().strip_prefix(&root).with_context(|_| {
+            format!(
+                "Unable to make path {} relative from {}",
+                entry.path().display(),
+                root.display()
+            )
+        })?;
+        let mut header_len = 512;
+        let path_len = path2bytes(&relative_path).unwrap().len() as u64;
+        if path_len > 100 {
+            header_len += 512 + path_len;
+            if path_len % 512 > 0 {
+                header_len += 512 - path_len % 512;
+            }
+        }
+        if !metadata.is_dir() {
+            let mut len = metadata.len();
+            if len % 512 > 0 {
+                len += 512 - len % 512;
+            }
+            header_len += len;
+        }
+        Ok(header_len)
+    }
+
+    fn measure_entry<P, Q>(&mut self, root: P, entry: Q) -> u64
+    where
+        P: AsRef<Path>,
+        Q: AsRef<Path>,
+        W: Write,
+    {
+        let walkdir = WalkDir::new(root.as_ref().join(&entry));
+        let entries = walkdir.into_iter().filter_entry(|e| !Self::is_hidden(e));
+        let mut total_size = 1024;
+        for e in entries {
+            match e {
+                Ok(e) => match self.entry_size(root.as_ref(), &e) {
+                    Err(e) => error!("{}", e),
+                    Ok(size) => total_size += size,
+                },
+                Err(e) => error!("{}", e),
+            }
+        }
+        total_size
     }
 
     fn add_to_archive<P, Q>(&mut self, root: P, entry: Q)
@@ -284,12 +366,16 @@ impl RustyShare {
             let archive_name = Self::get_archive_name(&path_, &mut files);
 
             let (tx, rx) = mpsc::channel(10);
+            let mut archive_size = 0;
+            let pipe = Pipe::new(tx.wait());
+            let mut archiver = Archiver::new(Builder::new(pipe));
+            for file in &files {
+                archive_size += archiver.measure_entry(&path, file);
+            }
+            error!("{}", archive_size);
             let f = pool.spawn_fn(move || {
-                let pipe = Pipe::new(tx.wait());
-
-                let mut archiver = Archiver::new(Builder::new(pipe));
-                for file in files {
-                    archiver.add_to_archive(&path, &file);
+                for file in &files {
+                    archiver.add_to_archive(&path, file);
                 }
                 archiver.finish();
 
@@ -304,6 +390,7 @@ impl RustyShare {
                         DispositionParam::Filename(Charset::Iso_8859_1, None, archive_name),
                     ],
                 })
+                .with_header(ContentLength(archive_size))
                 .with_header(ContentType("application/x-tar".parse::<Mime>().unwrap()))
                 .with_body(Box::new(rx.map_err(|_| hyper::Error::Incomplete)) as Body))
         });
