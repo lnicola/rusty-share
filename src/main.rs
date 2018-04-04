@@ -166,6 +166,12 @@ impl<W: Write> Archiver<W> {
         }
     }
 
+    fn finish(&mut self) {
+        if let Err(e) = self.builder.finish() {
+            error!("{}", e);
+        }
+    }
+
     fn is_hidden(entry: &walkdir::DirEntry) -> bool {
         entry
             .file_name()
@@ -285,6 +291,7 @@ impl RustyShare {
                 for file in files {
                     archiver.add_to_archive(&path, &file);
                 }
+                archiver.finish();
 
                 future::ok::<_, ()>(())
             });
