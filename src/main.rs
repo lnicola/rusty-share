@@ -372,7 +372,6 @@ impl RustyShare {
             for file in &files {
                 archive_size += archiver.measure_entry(&path, file);
             }
-            error!("{}", archive_size);
             let f = pool.spawn_fn(move || {
                 for file in &files {
                     archiver.add_to_archive(&path, file);
