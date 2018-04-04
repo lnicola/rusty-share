@@ -431,6 +431,7 @@ impl Service for RustyShare {
             .unwrap()
             .into_owned();
         let path = root.join(Path::new(&path_).strip_prefix("/").unwrap());
+        info!("{:?}", req);
         match *req.method() {
             Get => match self.handle_get(req, path, &path_) {
                 Ok(response) => response,
