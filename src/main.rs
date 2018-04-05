@@ -1,5 +1,3 @@
-#![feature(proc_macro, generators)]
-
 extern crate bytes;
 extern crate bytesize;
 extern crate chrono;
@@ -17,6 +15,7 @@ extern crate log;
 extern crate mime_sniffer;
 extern crate pretty_env_logger;
 extern crate rayon;
+#[macro_use]
 extern crate structopt;
 extern crate tar;
 extern crate tokio_core;
