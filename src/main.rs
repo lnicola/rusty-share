@@ -52,12 +52,15 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 #[cfg(not(target_os = "windows"))]
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use structopt::StructOpt;
 use tar::Builder;
 use tokio_core::reactor::{Core, Handle};
 use url::{form_urlencoded, percent_encoding};
 use walkdir::WalkDir;
+
+mod duration_ext;
+use duration_ext::DurationExt;
 
 #[cfg(target_os = "windows")]
 pub trait OsStrExt3 {
@@ -597,14 +600,4 @@ fn get_dir_index(path: &Path) -> Result<Vec<ShareEntry>, Error> {
 
 fn is_hidden(path: &OsStr) -> bool {
     path.as_bytes().starts_with(b".")
-}
-
-trait DurationExt {
-    fn to_millis(&self) -> u64;
-}
-
-impl DurationExt for Duration {
-    fn to_millis(&self) -> u64 {
-        1000 * self.as_secs() + u64::from(self.subsec_nanos()) / (1000 * 1000)
-    }
 }
