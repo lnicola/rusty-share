@@ -225,7 +225,6 @@ impl<W: Write> Archiver<W> {
                 Ok(e) => match self.entry_size(root.as_ref(), &e) {
                     Err(e) => error!("{}", e),
                     Ok(size) => {
-                        info!("{}: {}", e.path().display(), total_size);
                         total_size += size;
                     }
                 },
@@ -385,7 +384,6 @@ impl RustyShare {
                                 .unwrap()
                                 .to_owned(),
                         );
-                        info!("{}", entry.path().display());
                     }
                 }
             }
