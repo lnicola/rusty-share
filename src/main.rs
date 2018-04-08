@@ -194,7 +194,7 @@ impl<W: Write> Archiver<W> {
             )
         })?;
         let mut header_len = 512;
-        let path_len = path2bytes(&relative_path).unwrap().len() as u64;
+        let path_len = path2bytes(relative_path).unwrap().len() as u64;
         if path_len > 100 {
             header_len += 512 + path_len;
             if path_len % 512 > 0 {
@@ -375,7 +375,7 @@ impl RustyShare {
                         e
                     }).ok()
                 }) {
-                    if !is_hidden(&entry.path().file_name().unwrap()) {
+                    if !is_hidden(entry.path().file_name().unwrap()) {
                         files.push(
                             entry
                                 .path()
@@ -424,22 +424,15 @@ impl RustyShare {
     }
 
     fn get_archive_name(path_: &str, files: &[String]) -> Vec<u8> {
-        const DEFAULT_ARCHIVE_NAME: &[u8] = b"archive.tar";
-        match files.len() {
-            0 => {
-                if path_ == "/" {
-                    DEFAULT_ARCHIVE_NAME.to_vec()
-                } else {
-                    let path_ = path_.trim_right_matches('/');
-                    let pos = path_.rfind('/').unwrap();
-                    (path_[pos + 1..].to_owned() + ".tar").as_bytes().to_vec()
-                }
-            }
-            1 => {
-                let s = files[0].trim_right_matches('/');
-                (s.to_owned() + ".tar").as_bytes().to_vec()
-            }
-            _ => DEFAULT_ARCHIVE_NAME.to_vec(),
+        if files.len() == 1 {
+            let s = files[0].trim_right_matches('/');
+            (s.to_owned() + ".tar").as_bytes().to_vec()
+        } else if path_ == "/" {
+            b"archive.tar".to_vec()
+        } else {
+            let path_ = path_.trim_right_matches('/');
+            let pos = path_.rfind('/').unwrap();
+            (path_[pos + 1..].to_owned() + ".tar").as_bytes().to_vec()
         }
     }
 }
