@@ -219,12 +219,15 @@ impl<W: Write> Archiver<W> {
     {
         let walkdir = WalkDir::new(root.as_ref().join(&entry));
         let entries = walkdir.into_iter().filter_entry(|e| !Self::is_hidden(e));
-        let mut total_size = 1024;
+        let mut total_size = 0;
         for e in entries {
             match e {
                 Ok(e) => match self.entry_size(root.as_ref(), &e) {
                     Err(e) => error!("{}", e),
-                    Ok(size) => total_size += size,
+                    Ok(size) => {
+                        info!("{}: {}", e.path().display(), total_size);
+                        total_size += size;
+                    }
                 },
                 Err(e) => error!("{}", e),
             }
@@ -260,7 +263,7 @@ impl<W: Write> Archiver<W> {
         entry
             .file_name()
             .to_str()
-            .map_or(true, |s| s != "./." && s.starts_with('.'))
+            .map_or(true, |s| s.starts_with('.'))
     }
 }
 
@@ -365,10 +368,32 @@ impl RustyShare {
                 }
             }
 
-            let archive_name = Self::get_archive_name(&path_, &mut files);
+            if files.is_empty() {
+                for entry in fs::read_dir(&path).unwrap().filter_map(|file| {
+                    file.map_err(|e| {
+                        error!("{}", e);
+                        e
+                    }).ok()
+                }) {
+                    if !is_hidden(&entry.path().file_name().unwrap()) {
+                        files.push(
+                            entry
+                                .path()
+                                .file_name()
+                                .unwrap()
+                                .to_str()
+                                .unwrap()
+                                .to_owned(),
+                        );
+                        info!("{}", entry.path().display());
+                    }
+                }
+            }
+
+            let archive_name = Self::get_archive_name(&path_, &files);
 
             let (tx, rx) = mpsc::channel(10);
-            let mut archive_size = 0;
+            let mut archive_size = 1024;
             let pipe = Pipe::new(tx.wait());
             let mut archiver = Archiver::new(Builder::new(pipe));
             for file in &files {
@@ -398,11 +423,10 @@ impl RustyShare {
         Box::new(b)
     }
 
-    fn get_archive_name(path_: &str, files: &mut Vec<String>) -> Vec<u8> {
+    fn get_archive_name(path_: &str, files: &[String]) -> Vec<u8> {
         const DEFAULT_ARCHIVE_NAME: &[u8] = b"archive.tar";
         match files.len() {
             0 => {
-                files.push(String::from("."));
                 if path_ == "/" {
                     DEFAULT_ARCHIVE_NAME.to_vec()
                 } else {
