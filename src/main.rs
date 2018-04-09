@@ -23,16 +23,12 @@ extern crate url;
 extern crate walkdir;
 
 use bytes::Bytes;
-use bytesize::ByteSize;
 use chrono::{DateTime, Local};
-use chrono_humanize::HumanTime;
 use duration_ext::DurationExt;
 use failure::{Error, ResultExt};
 use futures::sync::mpsc;
 use futures::{future, stream, Future, Sink, Stream};
 use futures_cpupool::CpuPool;
-use horrorshow::helper::doctype;
-use horrorshow::prelude::*;
 use http::HeaderMap;
 use http::header::CONTENT_TYPE;
 use http_serve::ChunkedReadFile;
@@ -64,6 +60,7 @@ use url::{form_urlencoded, percent_encoding};
 use walkdir::WalkDir;
 
 mod duration_ext;
+mod index_page;
 mod options;
 mod path_ext;
 mod pipe;
@@ -271,7 +268,7 @@ impl RustyShare {
                     let response = match entries {
                         Ok(entries) => {
                             let render_start = Instant::now();
-                            let rendered = render_index(entries);
+                            let rendered = index_page::render(entries).unwrap();
                             let render_time = Instant::now() - render_start;
                             let bytes = Bytes::from(rendered);
                             info!(
@@ -476,69 +473,11 @@ fn main() {
 }
 
 #[derive(Debug)]
-struct ShareEntry {
+pub struct ShareEntry {
     name: OsString,
     is_dir: bool,
     size: u64,
     date: DateTime<Local>,
-}
-
-fn render_index(entries: Vec<ShareEntry>) -> String {
-    (html! {
-        : doctype::HTML;
-        html {
-            head {
-                script { : Raw(include_str!("../assets/player.js")) }
-                style { : Raw(include_str!("../assets/style.css")); }
-            }
-            body {
-                form(method="POST") {
-                    table(class="view") {
-                        colgroup {
-                            col(class="selected");
-                            col(class="name");
-                            col(class="size");
-                            col(class="date");
-                        }
-                        tr(class="header") {
-                            th;
-                            th { : Raw("Name") }
-                            th { : Raw("Size") }
-                            th { : Raw("Last modified") }
-                        }
-                        tr { td; td { a(href=Raw("..")) { : Raw("..") } } td; td; }
-                        @ for ShareEntry { mut name, is_dir, size, date } in entries {
-                            |tmpl| {
-                                let mut display_name = name;
-                                if is_dir {
-                                    display_name.push("/");
-                                }
-                                let link = percent_encoding::percent_encode(
-                                    display_name.as_bytes(),
-                                    percent_encoding::DEFAULT_ENCODE_SET,
-                                ).to_string();
-                                let name = display_name.to_string_lossy().into_owned();
-                                tmpl << html! {
-                                    tr {
-                                        td { input(name="s", value=Raw(&link), type="checkbox") }
-                                        td { a(href=Raw(&link)) { : name } }
-                                        td {
-                                            @ if !is_dir {
-                                                : Raw(ByteSize::b(size).to_string(false))
-                                            }
-                                        }
-                                        td { : Raw(HumanTime::from(date).to_string()) }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    input(type="submit", value="Download");
-                }
-            }
-        }
-    }).into_string()
-        .unwrap()
 }
 
 impl<'a> TryFrom<&'a DirEntry> for ShareEntry {
