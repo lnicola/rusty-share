@@ -51,7 +51,7 @@ use std::convert::TryFrom;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, DirEntry, File};
 use std::io::{self, Read, Seek, SeekFrom, Write};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 #[cfg(not(target_os = "windows"))]
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
@@ -243,6 +243,11 @@ struct Options {
     #[structopt(short = "r", long = "root", help = "Root path", default_value = ".",
                 parse(from_os_str))]
     root: PathBuf,
+    #[structopt(short = "l", long = "listen", help = "Address to listen on",
+                default_value = "127.0.0.1")]
+    address: String,
+    #[structopt(short = "p", long = "port", help = "Port to bind to", default_value = "8080")]
+    port: u16,
 }
 
 struct RustyShare {
@@ -445,22 +450,30 @@ fn run() -> Result<(), Error> {
     let mut core = Core::new().context("Unable to create the Core")?;
     let handle = core.handle();
 
-    let server = RustyShare {
+    let addr = SocketAddr::new(
+        options
+            .address
+            .parse::<IpAddr>()
+            .with_context(|_| "Unable to parse listen address")?,
+        options.port,
+    );
+    let rusty_share = RustyShare {
         options,
         handle: handle.clone(),
         pool: CpuPool::new_num_cpus(),
     };
 
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 3010);
     let server = Http::new()
-        .serve_addr_handle(&addr, &handle, server::const_service(server))
-        .context("Unable to start server")?
-        .for_each(move |conn| {
-            handle.spawn(conn.map(|_| ()).map_err(|e| error!("{}", e)));
-            Ok(())
-        });
+        .serve_addr_handle(&addr, &handle, server::const_service(rusty_share))
+        .context("Unable to start server")?;
+    info!("Listening on http://{}", server.incoming_ref().local_addr());
 
-    core.run(server).context("Unable to run server")?;
+    let future = server.for_each(move |conn| {
+        handle.spawn(conn.map(|_| ()).map_err(|e| error!("{}", e)));
+        Ok(())
+    });
+
+    core.run(future).context("Unable to run server")?;
     Ok(())
 }
 
