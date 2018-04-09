@@ -43,11 +43,10 @@ use path_ext::PathExt;
 use pipe::Pipe;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
-use std::borrow::Cow;
 use std::convert::TryFrom;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, DirEntry, File};
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::{IpAddr, SocketAddr};
 #[cfg(not(target_os = "windows"))]
 use std::os::unix::ffi::OsStrExt;
@@ -62,25 +61,9 @@ use walkdir::WalkDir;
 mod duration_ext;
 mod index_page;
 mod options;
+mod os_str_ext;
 mod path_ext;
 mod pipe;
-
-#[cfg(target_os = "windows")]
-pub trait OsStrExt3 {
-    fn from_bytes(b: &[u8]) -> &Self;
-    fn as_bytes(&self) -> &[u8];
-}
-
-#[cfg(target_os = "windows")]
-impl OsStrExt3 for OsStr {
-    fn from_bytes(b: &[u8]) -> &Self {
-        use std::mem;
-        unsafe { mem::transmute(b) }
-    }
-    fn as_bytes(&self) -> &[u8] {
-        self.to_str().map(|s| s.as_bytes()).unwrap()
-    }
-}
 
 struct Archiver<W: Write> {
     builder: Builder<W>,
@@ -90,34 +73,6 @@ impl<W: Write> Archiver<W> {
     fn new(builder: Builder<W>) -> Self {
         Self { builder }
     }
-}
-
-#[cfg(windows)]
-pub fn path2bytes(p: &Path) -> io::Result<Cow<[u8]>> {
-    p.as_os_str()
-        .to_str()
-        .map(|s| s.as_bytes())
-        .ok_or_else(|| other(&format!("path {} was not valid unicode", p.display())))
-        .map(|bytes| {
-            if bytes.contains(&b'\\') {
-                // Normalize to Unix-style path separators
-                let mut bytes = bytes.to_owned();
-                for b in &mut bytes {
-                    if *b == b'\\' {
-                        *b = b'/';
-                    }
-                }
-                Cow::Owned(bytes)
-            } else {
-                Cow::Borrowed(bytes)
-            }
-        })
-}
-
-#[cfg(any(unix, target_os = "redox"))]
-/// On unix this will never fail
-pub fn path2bytes(p: &Path) -> io::Result<Cow<[u8]>> {
-    Ok(p.as_os_str().as_bytes()).map(Cow::Borrowed)
 }
 
 impl<W: Write> Archiver<W> {
@@ -165,7 +120,7 @@ impl<W: Write> Archiver<W> {
             )
         })?;
         let mut header_len = 512;
-        let path_len = path2bytes(relative_path).unwrap().len() as u64;
+        let path_len = relative_path.len() as u64;
         if path_len > 100 {
             header_len += 512 + path_len;
             if path_len % 512 > 0 {
