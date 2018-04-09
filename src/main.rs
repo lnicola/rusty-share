@@ -284,17 +284,17 @@ impl RustyShare {
         &self,
         req: Request,
         path: PathBuf,
-        path_: &str,
+        path_: &Path,
     ) -> Result<<Self as Service>::Future, Error> {
         type Body = Box<Stream<Item = Bytes, Error = hyper::Error> + Send>;
 
         let metadata = fs::metadata(&path)
             .with_context(|_| format!("Unable to read metadata of {}", path.display()))?;
         if metadata.is_dir() {
-            if !path_.ends_with('/') {
+            if !path_.to_str().unwrap().ends_with('/') {
                 let response = Response::new()
                     .with_status(StatusCode::Found)
-                    .with_header(Location::new(path_.to_string() + "/"));
+                    .with_header(Location::new(path_.to_str().unwrap().to_owned() + "/"));
                 Ok(Box::new(future::ok(response)))
             } else {
                 let f = self.pool.spawn_fn(move || {
@@ -347,7 +347,12 @@ impl RustyShare {
         }
     }
 
-    fn handle_post(&self, req: Request, path: PathBuf, path_: String) -> <Self as Service>::Future {
+    fn handle_post(
+        &self,
+        req: Request,
+        path: PathBuf,
+        path_: PathBuf,
+    ) -> <Self as Service>::Future {
         type Body = Box<Stream<Item = Bytes, Error = hyper::Error> + Send>;
 
         let pool = self.pool.clone();
@@ -416,18 +421,19 @@ impl RustyShare {
         Box::new(b)
     }
 
-    fn get_archive_name(path_: &str, files: &[PathBuf]) -> Vec<u8> {
+    fn get_archive_name(path_: &Path, files: &[PathBuf]) -> Vec<u8> {
         if files.len() == 1 {
             let s = files[0].file_name().unwrap();
             (s.to_str().unwrap().to_owned() + ".tar")
                 .as_bytes()
                 .to_vec()
-        } else if path_ == "/" {
+        } else if path_.to_str().unwrap() == "/" {
             b"archive.tar".to_vec()
         } else {
-            let path_ = path_.trim_right_matches('/');
-            let pos = path_.rfind('/').unwrap();
-            (path_[pos + 1..].to_owned() + ".tar").as_bytes().to_vec()
+            let file_name = path_.file_name().unwrap();
+            (file_name.to_owned().to_str().unwrap().to_owned() + ".tar")
+                .as_bytes()
+                .to_vec()
         }
     }
 }
@@ -440,10 +446,10 @@ impl Service for RustyShare {
 
     fn call(&self, req: Request) -> Self::Future {
         let root = self.options.root.as_path();
-        let path_ = percent_encoding::percent_decode(req.path().as_bytes())
-            .decode_utf8()
-            .unwrap()
-            .into_owned();
+        let path_: PathBuf = OsStr::from_bytes(
+            std::borrow::Cow::<[u8]>::from(percent_encoding::percent_decode(req.path().as_bytes()))
+                .as_ref(),
+        ).into();
         let path = root.join(Path::new(&path_).strip_prefix("/").unwrap());
         info!("{:?}", req);
         match *req.method() {
