@@ -23,7 +23,6 @@ extern crate url;
 extern crate walkdir;
 
 use bytes::Bytes;
-use chrono::{DateTime, Local};
 use duration_ext::DurationExt;
 use failure::{Error, ResultExt};
 use futures::sync::mpsc;
@@ -43,8 +42,9 @@ use path_ext::PathExt;
 use pipe::Pipe;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
+use share_entry::ShareEntry;
 use std::convert::TryFrom;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::fs::{self, DirEntry, File};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::{IpAddr, SocketAddr};
@@ -64,6 +64,7 @@ mod options;
 mod os_str_ext;
 mod path_ext;
 mod pipe;
+mod share_entry;
 
 struct Archiver<W: Write> {
     builder: Builder<W>,
@@ -431,39 +432,6 @@ fn main() {
     }
 }
 
-#[derive(Debug)]
-pub struct ShareEntry {
-    name: OsString,
-    is_dir: bool,
-    size: u64,
-    date: DateTime<Local>,
-}
-
-impl<'a> TryFrom<&'a DirEntry> for ShareEntry {
-    type Error = Error;
-
-    fn try_from(value: &DirEntry) -> Result<Self, Self::Error> {
-        let metadata = value
-            .metadata()
-            .with_context(|_| format!("Unable to read metadata of {}", value.path().display()))?;
-        let date = metadata
-            .modified()
-            .with_context(|_| {
-                format!(
-                    "Unable to read last modified time of {}",
-                    value.path().display()
-                )
-            })?
-            .into();
-        Ok(ShareEntry {
-            name: value.file_name(),
-            is_dir: metadata.is_dir(),
-            size: metadata.len(),
-            date,
-        })
-    }
-}
-
 fn dir_entries(path: &Path) -> Result<impl Iterator<Item = DirEntry>, Error> {
     Ok(fs::read_dir(path)
         .with_context(|_| format!("Unable to read directory {}", path.display()))?
@@ -483,7 +451,11 @@ fn get_dir_index(path: &Path) -> Result<Vec<ShareEntry>, Error> {
         .filter_map(|entry| match ShareEntry::try_from(&entry) {
             Ok(e) => Some(e),
             Err(e) => {
-                error!("{}", e);
+                error!(
+                    "Unable to read metadata of {}: {}",
+                    entry.path().display(),
+                    e
+                );
                 None
             }
         })
