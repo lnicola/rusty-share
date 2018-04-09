@@ -60,7 +60,9 @@ use url::{form_urlencoded, percent_encoding};
 use walkdir::WalkDir;
 
 mod duration_ext;
+mod path_ext;
 use duration_ext::DurationExt;
+use path_ext::PathExt;
 
 #[cfg(target_os = "windows")]
 pub trait OsStrExt3 {
@@ -423,15 +425,19 @@ impl RustyShare {
 
     fn get_archive_name(path_: &Path, files: &[PathBuf]) -> Vec<u8> {
         if files.len() == 1 {
-            let s = files[0].file_name().unwrap();
-            (s.to_str().unwrap().to_owned() + ".tar")
+            files[0]
+                .with_extension("tar")
+                .file_name()
+                .unwrap()
                 .as_bytes()
                 .to_vec()
-        } else if path_.to_str().unwrap() == "/" {
+        } else if path_.is_root() {
             b"archive.tar".to_vec()
         } else {
-            let file_name = path_.file_name().unwrap();
-            (file_name.to_owned().to_str().unwrap().to_owned() + ".tar")
+            path_
+                .with_extension("tar")
+                .file_name()
+                .unwrap()
                 .as_bytes()
                 .to_vec()
         }
