@@ -47,6 +47,7 @@ use pipe::Pipe;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
 use std::borrow::Cow;
+use std::convert::TryFrom;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -544,26 +545,28 @@ fn render_index(entries: Vec<ShareEntry>) -> String {
         .unwrap()
 }
 
-fn get_share_entry(entry: &fs::DirEntry) -> Result<Option<ShareEntry>, Error> {
-    let metadata = entry
-        .metadata()
-        .with_context(|_| format!("Unable to read metadata of {}", entry.path().display()))?;
-    let name = entry.file_name();
-    let date = metadata.modified().with_context(|_| {
-        format!(
-            "Unable to read last modified time of {}",
-            entry.path().display()
-        )
-    })?;
-    if !is_hidden(&name) {
-        Ok(Some(ShareEntry {
-            name,
+impl<'a> TryFrom<&'a fs::DirEntry> for ShareEntry {
+    type Error = Error;
+
+    fn try_from(value: &fs::DirEntry) -> Result<Self, Self::Error> {
+        let metadata = value
+            .metadata()
+            .with_context(|_| format!("Unable to read metadata of {}", value.path().display()))?;
+        let date = metadata
+            .modified()
+            .with_context(|_| {
+                format!(
+                    "Unable to read last modified time of {}",
+                    value.path().display()
+                )
+            })?
+            .into();
+        Ok(ShareEntry {
+            name: value.file_name(),
             is_dir: metadata.is_dir(),
             size: metadata.len(),
-            date: date.into(),
-        }))
-    } else {
-        Ok(None)
+            date,
+        })
     }
 }
 
@@ -576,10 +579,11 @@ fn get_dir_index(path: &Path) -> Result<Vec<ShareEntry>, Error> {
                 e
             }).ok()
         })
+        .filter(|file| !is_hidden(&file.file_name()))
         .collect::<Vec<_>>()
         .into_par_iter()
-        .filter_map(|entry| match get_share_entry(&entry) {
-            Ok(e) => e,
+        .filter_map(|entry| match ShareEntry::try_from(&entry) {
+            Ok(e) => Some(e),
             Err(e) => {
                 error!("{}", e);
                 None
