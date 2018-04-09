@@ -49,7 +49,7 @@ use rayon::slice::ParallelSliceMut;
 use std::borrow::Cow;
 use std::convert::TryFrom;
 use std::ffi::{OsStr, OsString};
-use std::fs::{self, File};
+use std::fs::{self, DirEntry, File};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 #[cfg(not(target_os = "windows"))]
@@ -346,17 +346,10 @@ impl RustyShare {
             }
 
             if files.is_empty() {
-                for entry in fs::read_dir(&path).unwrap().filter_map(|file| {
-                    file.map_err(|e| {
-                        error!("{}", e);
-                        e
-                    }).ok()
-                }) {
+                for entry in dir_entries(&path).unwrap() {
                     let path = entry.path();
                     let file_name = path.file_name().unwrap();
-                    if !is_hidden(file_name) {
-                        files.push(file_name.into());
-                    }
+                    files.push(file_name.into());
                 }
             }
 
@@ -545,10 +538,10 @@ fn render_index(entries: Vec<ShareEntry>) -> String {
         .unwrap()
 }
 
-impl<'a> TryFrom<&'a fs::DirEntry> for ShareEntry {
+impl<'a> TryFrom<&'a DirEntry> for ShareEntry {
     type Error = Error;
 
-    fn try_from(value: &fs::DirEntry) -> Result<Self, Self::Error> {
+    fn try_from(value: &DirEntry) -> Result<Self, Self::Error> {
         let metadata = value
             .metadata()
             .with_context(|_| format!("Unable to read metadata of {}", value.path().display()))?;
@@ -570,8 +563,8 @@ impl<'a> TryFrom<&'a fs::DirEntry> for ShareEntry {
     }
 }
 
-fn get_dir_index(path: &Path) -> Result<Vec<ShareEntry>, Error> {
-    let mut entries = fs::read_dir(&path)
+fn dir_entries(path: &Path) -> Result<impl Iterator<Item = DirEntry>, Error> {
+    Ok(fs::read_dir(path)
         .with_context(|_| format!("Unable to read directory {}", path.display()))?
         .filter_map(|file| {
             file.map_err(|e| {
@@ -579,7 +572,11 @@ fn get_dir_index(path: &Path) -> Result<Vec<ShareEntry>, Error> {
                 e
             }).ok()
         })
-        .filter(|file| !is_hidden(&file.file_name()))
+        .filter(|file| !is_hidden(&file.file_name())))
+}
+
+fn get_dir_index(path: &Path) -> Result<Vec<ShareEntry>, Error> {
+    let mut entries = dir_entries(path)?
         .collect::<Vec<_>>()
         .into_par_iter()
         .filter_map(|entry| match ShareEntry::try_from(&entry) {
