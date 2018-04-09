@@ -22,13 +22,13 @@ extern crate tokio_core;
 extern crate url;
 extern crate walkdir;
 
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::Bytes;
 use bytesize::ByteSize;
 use chrono::{DateTime, Local};
 use chrono_humanize::HumanTime;
+use duration_ext::DurationExt;
 use failure::{Error, ResultExt};
-use futures::sink::Wait;
-use futures::sync::mpsc::{self, Sender};
+use futures::sync::mpsc;
 use futures::{future, stream, Future, Sink, Stream};
 use futures_cpupool::CpuPool;
 use horrorshow::helper::doctype;
@@ -42,12 +42,14 @@ use hyper::mime::{Mime, TEXT_HTML_UTF_8};
 use hyper::server::{self, Http, Request, Response, Service};
 use hyper::{Get, Post, StatusCode};
 use mime_sniffer::MimeTypeSniffer;
+use path_ext::PathExt;
+use pipe::Pipe;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
 use std::borrow::Cow;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
-use std::io::{self, ErrorKind, Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 #[cfg(not(target_os = "windows"))]
 use std::os::unix::ffi::OsStrExt;
@@ -61,8 +63,7 @@ use walkdir::WalkDir;
 
 mod duration_ext;
 mod path_ext;
-use duration_ext::DurationExt;
-use path_ext::PathExt;
+mod pipe;
 
 #[cfg(target_os = "windows")]
 pub trait OsStrExt3 {
@@ -78,38 +79,6 @@ impl OsStrExt3 for OsStr {
     }
     fn as_bytes(&self) -> &[u8] {
         self.to_str().map(|s| s.as_bytes()).unwrap()
-    }
-}
-
-struct Pipe {
-    dest: Wait<Sender<Bytes>>,
-    bytes: BytesMut,
-}
-
-impl Pipe {
-    fn new(destination: Wait<Sender<Bytes>>) -> Self {
-        Pipe {
-            dest: destination,
-            bytes: BytesMut::new(),
-        }
-    }
-}
-
-impl Write for Pipe {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.bytes.reserve(buf.len());
-        self.bytes.put(buf);
-        match self.dest.send(self.bytes.take().into()) {
-            Ok(_) => Ok(buf.len()),
-            Err(e) => Err(io::Error::new(ErrorKind::UnexpectedEof, e)),
-        }
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        match self.dest.flush() {
-            Ok(_) => Ok(()),
-            Err(e) => Err(io::Error::new(ErrorKind::UnexpectedEof, e)),
-        }
     }
 }
 
