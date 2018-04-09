@@ -38,6 +38,7 @@ use hyper::server::{self, Http, Request, Response, Service};
 use hyper::{Get, Post, StatusCode};
 use mime_sniffer::MimeTypeSniffer;
 use options::Options;
+use os_str_ext::OsStrExt3;
 use path_ext::PathExt;
 use pipe::Pipe;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -48,8 +49,6 @@ use std::ffi::OsStr;
 use std::fs::{self, DirEntry, File};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::{IpAddr, SocketAddr};
-#[cfg(not(target_os = "windows"))]
-use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use structopt::StructOpt;
@@ -328,7 +327,11 @@ impl RustyShare {
                 .with_header(ContentDisposition {
                     disposition: DispositionType::Attachment,
                     parameters: vec![
-                        DispositionParam::Filename(Charset::Iso_8859_1, None, archive_name),
+                        DispositionParam::Filename(
+                            Charset::Iso_8859_1,
+                            None,
+                            archive_name.into_bytes(),
+                        ),
                     ],
                 })
                 .with_header(ContentLength(archive_size))
@@ -338,23 +341,23 @@ impl RustyShare {
         Box::new(b)
     }
 
-    fn get_archive_name(path_: &Path, files: &[PathBuf]) -> Vec<u8> {
+    fn get_archive_name(path_: &Path, files: &[PathBuf]) -> String {
         if files.len() == 1 {
             files[0]
                 .with_extension("tar")
                 .file_name()
                 .unwrap()
-                .as_bytes()
-                .to_vec()
+                .to_string_lossy()
+                .into_owned()
         } else if path_.is_root() {
-            b"archive.tar".to_vec()
+            String::from("archive.tar")
         } else {
             path_
                 .with_extension("tar")
                 .file_name()
                 .unwrap()
-                .as_bytes()
-                .to_vec()
+                .to_string_lossy()
+                .into_owned()
         }
     }
 }
