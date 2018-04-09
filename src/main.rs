@@ -42,6 +42,7 @@ use hyper::mime::{Mime, TEXT_HTML_UTF_8};
 use hyper::server::{self, Http, Request, Response, Service};
 use hyper::{Get, Post, StatusCode};
 use mime_sniffer::MimeTypeSniffer;
+use options::Options;
 use path_ext::PathExt;
 use pipe::Pipe;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -63,6 +64,7 @@ use url::{form_urlencoded, percent_encoding};
 use walkdir::WalkDir;
 
 mod duration_ext;
+mod options;
 mod path_ext;
 mod pipe;
 
@@ -236,18 +238,6 @@ impl<W: Write> Archiver<W> {
             .to_str()
             .map_or(true, |s| s.starts_with('.'))
     }
-}
-
-#[derive(Clone, Debug, StructOpt)]
-struct Options {
-    #[structopt(short = "r", long = "root", help = "Root path", default_value = ".",
-                parse(from_os_str))]
-    root: PathBuf,
-    #[structopt(short = "l", long = "listen", help = "Address to listen on",
-                default_value = "127.0.0.1")]
-    address: String,
-    #[structopt(short = "p", long = "port", help = "Port to bind to", default_value = "8080")]
-    port: u16,
 }
 
 struct RustyShare {
