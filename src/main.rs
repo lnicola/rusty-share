@@ -325,7 +325,7 @@ impl RustyShare {
             let mut files = Vec::new();
             for (name, value) in form_urlencoded::parse(&b) {
                 if name == "s" {
-                    let value = OsStr::from_bytes(
+                    let value: PathBuf = OsStr::from_bytes(
                         std::borrow::Cow::<[u8]>::from(percent_encoding::percent_decode(
                             value.as_bytes(),
                         )).as_ref(),
@@ -342,6 +342,10 @@ impl RustyShare {
                     let path = entry.path();
                     let file_name = path.file_name().unwrap();
                     files.push(file_name.into());
+                }
+            } else {
+                for file in &files {
+                    info!("{}", file.display());
                 }
             }
 
@@ -412,7 +416,7 @@ impl Service for RustyShare {
                 .as_ref(),
         ).into();
         let path = root.join(Path::new(&path_).strip_prefix("/").unwrap());
-        info!("{:?}", req);
+        info!("{} {}", req.method(), req.path());
         match *req.method() {
             Get => match self.handle_get(req, path, &path_) {
                 Ok(response) => response,
