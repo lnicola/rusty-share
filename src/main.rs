@@ -356,10 +356,11 @@ impl RustyShare {
             let mut files = Vec::new();
             for (name, value) in form_urlencoded::parse(&b) {
                 if name == "s" {
-                    let value = percent_encoding::percent_decode(value.as_bytes())
-                        .decode_utf8()
-                        .unwrap()
-                        .into_owned();
+                    let value = OsStr::from_bytes(
+                        std::borrow::Cow::<[u8]>::from(percent_encoding::percent_decode(
+                            value.as_bytes(),
+                        )).as_ref(),
+                    ).into();
                     files.push(value)
                 } else {
                     let response = Response::new().with_status(StatusCode::BadRequest);
@@ -374,16 +375,10 @@ impl RustyShare {
                         e
                     }).ok()
                 }) {
-                    if !is_hidden(entry.path().file_name().unwrap()) {
-                        files.push(
-                            entry
-                                .path()
-                                .file_name()
-                                .unwrap()
-                                .to_str()
-                                .unwrap()
-                                .to_owned(),
-                        );
+                    let path = entry.path();
+                    let file_name = path.file_name().unwrap();
+                    if !is_hidden(file_name) {
+                        files.push(file_name.into());
                     }
                 }
             }
@@ -421,10 +416,12 @@ impl RustyShare {
         Box::new(b)
     }
 
-    fn get_archive_name(path_: &str, files: &[String]) -> Vec<u8> {
+    fn get_archive_name(path_: &str, files: &[PathBuf]) -> Vec<u8> {
         if files.len() == 1 {
-            let s = files[0].trim_right_matches('/');
-            (s.to_owned() + ".tar").as_bytes().to_vec()
+            let s = files[0].file_name().unwrap();
+            (s.to_str().unwrap().to_owned() + ".tar")
+                .as_bytes()
+                .to_vec()
         } else if path_ == "/" {
             b"archive.tar".to_vec()
         } else {
