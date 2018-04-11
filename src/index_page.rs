@@ -1,6 +1,3 @@
-#[cfg(target_os = "windows")]
-use OsStrExt3;
-use ShareEntry;
 use bytesize::ByteSize;
 use chrono_humanize::HumanTime;
 use failure::{Error, ResultExt};
@@ -9,6 +6,9 @@ use horrorshow::prelude::*;
 #[cfg(not(target_os = "windows"))]
 use std::os::unix::ffi::OsStrExt;
 use url::percent_encoding;
+#[cfg(target_os = "windows")]
+use OsStrExt3;
+use ShareEntry;
 
 pub fn render(entries: Vec<ShareEntry>) -> Result<String, Error> {
     let page = html! {

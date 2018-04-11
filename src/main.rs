@@ -28,8 +28,8 @@ use failure::{Error, ResultExt};
 use futures::sync::mpsc;
 use futures::{future, stream, Future, Sink, Stream};
 use futures_cpupool::CpuPool;
-use http::HeaderMap;
 use http::header::CONTENT_TYPE;
+use http::HeaderMap;
 use http_serve::ChunkedReadFile;
 use hyper::header::{Charset, ContentDisposition, ContentLength, ContentType, DispositionParam,
                     DispositionType, Location};
@@ -326,13 +326,11 @@ impl RustyShare {
             Ok(Response::new()
                 .with_header(ContentDisposition {
                     disposition: DispositionType::Attachment,
-                    parameters: vec![
-                        DispositionParam::Filename(
-                            Charset::Iso_8859_1,
-                            None,
-                            archive_name.into_bytes(),
-                        ),
-                    ],
+                    parameters: vec![DispositionParam::Filename(
+                        Charset::Iso_8859_1,
+                        None,
+                        archive_name.into_bytes(),
+                    )],
                 })
                 .with_header(ContentLength(archive_size))
                 .with_header(ContentType("application/x-tar".parse::<Mime>().unwrap()))
