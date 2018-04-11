@@ -18,7 +18,7 @@ extern crate rayon;
 #[macro_use]
 extern crate structopt;
 extern crate tar;
-extern crate tokio_core;
+extern crate tokio;
 extern crate url;
 extern crate walkdir;
 
@@ -53,7 +53,6 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use structopt::StructOpt;
 use tar::Builder;
-use tokio_core::reactor::{Core, Handle};
 use url::{form_urlencoded, percent_encoding};
 use walkdir::WalkDir;
 
@@ -194,7 +193,6 @@ impl<W: Write> Archiver<W> {
 
 struct RustyShare {
     options: Options,
-    handle: Handle,
     pool: CpuPool,
 }
 
@@ -275,7 +273,6 @@ impl RustyShare {
         type Body = Box<Stream<Item = Bytes, Error = hyper::Error> + Send>;
 
         let pool = self.pool.clone();
-        let handle = self.handle.clone();
         let b = req.body().concat2().and_then(move |b| {
             let mut files = Vec::new();
             for (name, value) in form_urlencoded::parse(&b) {
@@ -321,7 +318,7 @@ impl RustyShare {
 
                 future::ok::<_, ()>(())
             });
-            handle.spawn(f);
+            tokio::spawn(f);
 
             Ok(Response::new()
                 .with_header(ContentDisposition {
@@ -395,9 +392,6 @@ impl Service for RustyShare {
 fn run() -> Result<(), Error> {
     let options = Options::from_args();
 
-    let mut core = Core::new().context("Unable to create the Core")?;
-    let handle = core.handle();
-
     let addr = SocketAddr::new(
         options
             .address
@@ -407,21 +401,20 @@ fn run() -> Result<(), Error> {
     );
     let rusty_share = RustyShare {
         options,
-        handle: handle.clone(),
         pool: CpuPool::new_num_cpus(),
     };
 
     let server = Http::new()
-        .serve_addr_handle(&addr, &handle, server::const_service(rusty_share))
+        .bind(&addr, server::const_service(rusty_share))
         .context("Unable to start server")?;
-    info!("Listening on http://{}", server.incoming_ref().local_addr());
+    info!(
+        "Listening on http://{}",
+        server
+            .local_addr()
+            .with_context(|_| "Unable to retrieve the local address")?
+    );
 
-    let future = server.for_each(move |conn| {
-        handle.spawn(conn.map(|_| ()).map_err(|e| error!("{}", e)));
-        Ok(())
-    });
-
-    core.run(future).context("Unable to run server")?;
+    server.run().context("Unable to run server")?;
     Ok(())
 }
 
