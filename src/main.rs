@@ -1,3 +1,5 @@
+#![feature(try_from)]
+
 extern crate bytes;
 extern crate bytesize;
 extern crate chrono;
