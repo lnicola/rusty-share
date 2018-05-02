@@ -261,7 +261,7 @@ impl RustyShare {
                     headers.insert(CONTENT_TYPE, mime.parse().unwrap());
                 }
                 let f = ChunkedReadFile::new(f, None, headers)?;
-                Ok(http_serve::serve(f, &req))
+                Ok(http_serve::serve(f, &req.into()).into())
             })))
         }
     }
