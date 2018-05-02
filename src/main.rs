@@ -30,14 +30,10 @@ use failure::{Error, ResultExt};
 use futures::sync::mpsc;
 use futures::{future, stream, Future, Sink, Stream};
 use futures_cpupool::CpuPool;
-use http::header::CONTENT_TYPE;
+use http::header::{HeaderValue, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE, LOCATION};
 use http::HeaderMap;
 use http_serve::ChunkedReadFile;
-use hyper::header::{Charset, ContentDisposition, ContentLength, ContentType, DispositionParam,
-                    DispositionType, Location};
-use hyper::mime::{Mime, TEXT_HTML_UTF_8};
 use hyper::server::{self, Http, Request, Response, Service};
-use hyper::{Get, Post, StatusCode};
 use mime_sniffer::MimeTypeSniffer;
 use options::Options;
 use os_str_ext::OsStrExt3;
@@ -46,6 +42,7 @@ use pipe::Pipe;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
 use share_entry::ShareEntry;
+use std::borrow::Cow;
 use std::convert::TryFrom;
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry, File};
@@ -201,20 +198,33 @@ struct RustyShare {
 impl RustyShare {
     fn handle_get(
         &self,
-        req: Request,
+        req: http::Request<hyper::Body>,
         path: PathBuf,
         path_: &Path,
-    ) -> Result<<Self as Service>::Future, Error> {
+    ) -> Result<
+        Box<
+            Future<
+                Item = hyper::Response<Box<Stream<Item = Bytes, Error = hyper::Error> + Send>>,
+                Error = hyper::Error,
+            >,
+        >,
+        Error,
+    > {
         type Body = Box<Stream<Item = Bytes, Error = hyper::Error> + Send>;
 
         let metadata = fs::metadata(&path)
             .with_context(|_| format!("Unable to read metadata of {}", path.display()))?;
         if metadata.is_dir() {
             if !path_.to_str().unwrap().ends_with('/') {
-                let response = Response::new()
-                    .with_status(StatusCode::Found)
-                    .with_header(Location::new(path_.to_str().unwrap().to_owned() + "/"));
-                Ok(Box::new(future::ok(response)))
+                let response = http::Response::builder()
+                    .status(http::StatusCode::FOUND)
+                    .header(
+                        LOCATION,
+                        HeaderValue::from_str(&(path_.to_str().unwrap().to_owned() + "/")).unwrap(),
+                    )
+                    .body(Box::new(stream::empty()) as Body)
+                    .unwrap();
+                Ok(Box::new(future::ok(response.into())))
             } else {
                 let f = self.pool.spawn_fn(move || {
                     let enumerate_start = Instant::now();
@@ -233,19 +243,26 @@ impl RustyShare {
                             );
                             let len = bytes.len() as u64;
                             let body = Box::new(stream::once(Ok(bytes))) as Body;
-                            Response::new()
-                                .with_status(StatusCode::Ok)
-                                .with_header(ContentType(TEXT_HTML_UTF_8))
-                                .with_header(ContentLength(len))
-                                .with_body(body)
+                            http::Response::builder()
+                                .status(http::StatusCode::OK)
+                                .header("Content-Type", "text/html; charset=utf-8")
+                                .header(
+                                    "Content-Length",
+                                    HeaderValue::from_str(&len.to_string()).unwrap(),
+                                )
+                                .body(body)
+                                .unwrap()
                         }
                         Err(e) => {
                             error!("{}", e);
-                            Response::new().with_status(StatusCode::InternalServerError)
+                            http::Response::builder()
+                                .status(http::StatusCode::INTERNAL_SERVER_ERROR)
+                                .body(Box::new(stream::empty()) as Body)
+                                .unwrap()
                         }
                     };
 
-                    future::ok(response)
+                    future::ok(response.into())
                 });
                 Ok(Box::new(f))
             }
@@ -268,14 +285,19 @@ impl RustyShare {
 
     fn handle_post(
         &self,
-        req: Request,
+        req: http::Request<hyper::Body>,
         path: PathBuf,
         path_: PathBuf,
-    ) -> <Self as Service>::Future {
+    ) -> Box<
+        Future<
+            Item = hyper::Response<Box<Stream<Item = Bytes, Error = hyper::Error> + Send>>,
+            Error = hyper::Error,
+        >,
+    > {
         type Body = Box<Stream<Item = Bytes, Error = hyper::Error> + Send>;
 
         let pool = self.pool.clone();
-        let b = req.body().concat2().and_then(move |b| {
+        let b = req.into_body().concat2().and_then(move |b| {
             let mut files = Vec::new();
             for (name, value) in form_urlencoded::parse(&b) {
                 if name == "s" {
@@ -286,8 +308,11 @@ impl RustyShare {
                     ).into();
                     files.push(value)
                 } else {
-                    let response = Response::new().with_status(StatusCode::BadRequest);
-                    return Ok(response);
+                    let response = http::Response::builder()
+                        .status(http::StatusCode::BAD_REQUEST)
+                        .body(Box::new(stream::empty()) as Body)
+                        .unwrap();
+                    return Ok(response.into());
                 }
             }
 
@@ -322,18 +347,22 @@ impl RustyShare {
             });
             tokio::spawn(f);
 
-            Ok(Response::new()
-                .with_header(ContentDisposition {
-                    disposition: DispositionType::Attachment,
-                    parameters: vec![DispositionParam::Filename(
-                        Charset::Iso_8859_1,
-                        None,
-                        archive_name.into_bytes(),
-                    )],
-                })
-                .with_header(ContentLength(archive_size))
-                .with_header(ContentType("application/x-tar".parse::<Mime>().unwrap()))
-                .with_body(Box::new(rx.map_err(|_| hyper::Error::Incomplete)) as Body))
+            Ok(http::Response::builder()
+                .header(
+                    CONTENT_DISPOSITION,
+                    HeaderValue::from_str(&format!(
+                        "attachment; filename*=UTF-8''{}",
+                        archive_name
+                    )).unwrap(),
+                )
+                .header(
+                    CONTENT_LENGTH,
+                    HeaderValue::from_str(&archive_size.to_string()).unwrap(),
+                )
+                .header(CONTENT_TYPE, "application/x-tar")
+                .body(Box::new(rx.map_err(|_| hyper::Error::Incomplete)) as Body)
+                .unwrap()
+                .into())
         });
         Box::new(b)
     }
@@ -366,26 +395,36 @@ impl Service for RustyShare {
     type Future = Box<Future<Item = Self::Response, Error = Self::Error>>;
 
     fn call(&self, req: Request) -> Self::Future {
+        type Body = Box<Stream<Item = Bytes, Error = hyper::Error> + Send>;
+
+        let req: http::Request<hyper::Body> = req.into();
         let root = self.options.root.as_path();
         let path_: PathBuf = OsStr::from_bytes(
-            std::borrow::Cow::<[u8]>::from(percent_encoding::percent_decode(req.path().as_bytes()))
-                .as_ref(),
+            Cow::from(percent_encoding::percent_decode(
+                req.uri().path().as_bytes(),
+            )).as_ref(),
         ).into();
         let path = root.join(Path::new(&path_).strip_prefix("/").unwrap());
-        info!("{} {}", req.method(), req.path());
+        info!("{} {}", req.method(), req.uri().path());
         match *req.method() {
-            Get => match self.handle_get(req, path, &path_) {
+            http::Method::GET => match self.handle_get(req, path, &path_) {
                 Ok(response) => response,
                 Err(e) => {
                     error!("{}", e);
-                    let response = Response::new().with_status(StatusCode::InternalServerError);
-                    Box::new(future::ok(response))
+                    let response = http::Response::builder()
+                        .status(http::StatusCode::INTERNAL_SERVER_ERROR)
+                        .body(Box::new(stream::empty()) as Body)
+                        .unwrap();
+                    Box::new(future::ok(response.into()))
                 }
             },
-            Post => self.handle_post(req, path, path_),
+            http::Method::POST => self.handle_post(req, path, path_),
             _ => {
-                let response = Response::new().with_status(StatusCode::MethodNotAllowed);
-                Box::new(future::ok(response))
+                let response = http::Response::builder()
+                    .status(http::StatusCode::METHOD_NOT_ALLOWED)
+                    .body(Box::new(stream::empty()) as Body)
+                    .unwrap();
+                Box::new(future::ok(response.into()))
             }
         }
     }
