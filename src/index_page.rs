@@ -51,7 +51,7 @@ pub fn render(entries: Vec<ShareEntry>) -> Result<String, Error> {
                                         td { a(href=Raw(&link)) { : name } }
                                         td {
                                             @ if !is_dir {
-                                                : Raw(ByteSize::b(size).to_string(false))
+                                                : Raw(ByteSize::b(size).to_string_as(false))
                                             }
                                         }
                                         td { : Raw(HumanTime::from(date).to_string()) }
