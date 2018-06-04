@@ -28,12 +28,12 @@ use bytes::Bytes;
 use duration_ext::DurationExt;
 use failure::{Error, ResultExt};
 use futures::sync::mpsc;
-use futures::{future, stream, Future, Sink, Stream};
+use futures::{future, Future, Sink, Stream};
 use futures_cpupool::CpuPool;
 use http::header::{HeaderValue, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE, LOCATION};
-use http::HeaderMap;
+use http::{HeaderMap, Method, Request, Response, StatusCode};
 use http_serve::ChunkedReadFile;
-use hyper::server::{self, Http, Request, Response, Service};
+use hyper::{service, Body, Server};
 use mime_sniffer::MimeTypeSniffer;
 use options::Options;
 use os_str_ext::OsStrExt3;
@@ -190,6 +190,7 @@ impl<W: Write> Archiver<W> {
     }
 }
 
+#[derive(Clone)]
 struct RustyShare {
     options: Options,
     pool: CpuPool,
@@ -198,33 +199,24 @@ struct RustyShare {
 impl RustyShare {
     fn handle_get(
         &self,
-        req: http::Request<hyper::Body>,
+        req: Request<Body>,
         path: PathBuf,
         path_: &Path,
-    ) -> Result<
-        Box<
-            Future<
-                Item = hyper::Response<Box<Stream<Item = Bytes, Error = hyper::Error> + Send>>,
-                Error = hyper::Error,
-            >,
-        >,
-        Error,
-    > {
-        type Body = Box<Stream<Item = Bytes, Error = hyper::Error> + Send>;
-
+    ) -> Result<Box<Future<Item = Response<Body>, Error = std::io::Error> + Send + 'static>, Error>
+    {
         let metadata = fs::metadata(&path)
             .with_context(|_| format!("Unable to read metadata of {}", path.display()))?;
         if metadata.is_dir() {
             if !path_.to_str().unwrap().ends_with('/') {
-                let response = http::Response::builder()
-                    .status(http::StatusCode::FOUND)
+                let response = Response::builder()
+                    .status(StatusCode::FOUND)
                     .header(
                         LOCATION,
                         HeaderValue::from_str(&(path_.to_str().unwrap().to_owned() + "/")).unwrap(),
                     )
-                    .body(Box::new(stream::empty()) as Body)
+                    .body(Body::empty())
                     .unwrap();
-                Ok(Box::new(future::ok(response.into())))
+                Ok(Box::new(future::ok(response)))
             } else {
                 let f = self.pool.spawn_fn(move || {
                     let enumerate_start = Instant::now();
@@ -242,27 +234,26 @@ impl RustyShare {
                                 render_time.to_millis()
                             );
                             let len = bytes.len() as u64;
-                            let body = Box::new(stream::once(Ok(bytes))) as Body;
-                            http::Response::builder()
-                                .status(http::StatusCode::OK)
+                            Response::builder()
+                                .status(StatusCode::OK)
                                 .header("Content-Type", "text/html; charset=utf-8")
                                 .header(
                                     "Content-Length",
                                     HeaderValue::from_str(&len.to_string()).unwrap(),
                                 )
-                                .body(body)
+                                .body(bytes.into())
                                 .unwrap()
                         }
                         Err(e) => {
                             error!("{}", e);
-                            http::Response::builder()
-                                .status(http::StatusCode::INTERNAL_SERVER_ERROR)
-                                .body(Box::new(stream::empty()) as Body)
+                            Response::builder()
+                                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                .body(Body::empty())
                                 .unwrap()
                         }
                     };
 
-                    future::ok(response.into())
+                    future::ok(response)
                 });
                 Ok(Box::new(f))
             }
@@ -278,92 +269,92 @@ impl RustyShare {
                     headers.insert(CONTENT_TYPE, mime.parse().unwrap());
                 }
                 let f = ChunkedReadFile::new(f, None, headers)?;
-                Ok(http_serve::serve(f, &req.into()).into())
+                Ok(http_serve::serve(f, &req))
             })))
         }
     }
 
     fn handle_post(
         &self,
-        req: http::Request<hyper::Body>,
+        req: Request<Body>,
         path: PathBuf,
         path_: PathBuf,
-    ) -> Box<
-        Future<
-            Item = hyper::Response<Box<Stream<Item = Bytes, Error = hyper::Error> + Send>>,
-            Error = hyper::Error,
-        >,
-    > {
-        type Body = Box<Stream<Item = Bytes, Error = hyper::Error> + Send>;
-
+    ) -> Box<Future<Item = Response<Body>, Error = std::io::Error> + Send + 'static> {
         let pool = self.pool.clone();
-        let b = req.into_body().concat2().and_then(move |b| {
-            let mut files = Vec::new();
-            for (name, value) in form_urlencoded::parse(&b) {
-                if name == "s" {
-                    let value: PathBuf = OsStr::from_bytes(
-                        std::borrow::Cow::<[u8]>::from(percent_encoding::percent_decode(
-                            value.as_bytes(),
-                        )).as_ref(),
-                    ).into();
-                    files.push(value)
+        let b = req.into_body()
+            .concat2()
+            .and_then(move |b| {
+                let mut files = Vec::new();
+                for (name, value) in form_urlencoded::parse(&b) {
+                    if name == "s" {
+                        let value: PathBuf = OsStr::from_bytes(
+                            std::borrow::Cow::<[u8]>::from(percent_encoding::percent_decode(
+                                value.as_bytes(),
+                            )).as_ref(),
+                        ).into();
+                        files.push(value)
+                    } else {
+                        let response = Response::builder()
+                            .status(StatusCode::BAD_REQUEST)
+                            .body(Body::empty())
+                            .unwrap();
+                        return Ok(response);
+                    }
+                }
+
+                if files.is_empty() {
+                    for entry in dir_entries(&path).unwrap() {
+                        let path = entry.path();
+                        let file_name = path.file_name().unwrap();
+                        files.push(file_name.into());
+                    }
                 } else {
-                    let response = http::Response::builder()
-                        .status(http::StatusCode::BAD_REQUEST)
-                        .body(Box::new(stream::empty()) as Body)
-                        .unwrap();
-                    return Ok(response.into());
+                    for file in &files {
+                        info!("{}", file.display());
+                    }
                 }
-            }
 
-            if files.is_empty() {
-                for entry in dir_entries(&path).unwrap() {
-                    let path = entry.path();
-                    let file_name = path.file_name().unwrap();
-                    files.push(file_name.into());
-                }
-            } else {
+                let archive_name = Self::get_archive_name(&path_, &files);
+
+                let (tx, rx) = mpsc::channel(10);
+                let mut archive_size = 1024;
+                let pipe = Pipe::new(tx.wait());
+                let mut archiver = Archiver::new(Builder::new(pipe));
                 for file in &files {
-                    info!("{}", file.display());
+                    archive_size += archiver.measure_entry(&path, file);
                 }
-            }
+                let f = pool.spawn_fn(move || {
+                    for file in &files {
+                        archiver.add_to_archive(&path, file);
+                    }
+                    archiver.finish();
 
-            let archive_name = Self::get_archive_name(&path_, &files);
+                    future::ok::<_, ()>(())
+                });
+                tokio::spawn(f);
 
-            let (tx, rx) = mpsc::channel(10);
-            let mut archive_size = 1024;
-            let pipe = Pipe::new(tx.wait());
-            let mut archiver = Archiver::new(Builder::new(pipe));
-            for file in &files {
-                archive_size += archiver.measure_entry(&path, file);
-            }
-            let f = pool.spawn_fn(move || {
-                for file in &files {
-                    archiver.add_to_archive(&path, file);
-                }
-                archiver.finish();
-
-                future::ok::<_, ()>(())
-            });
-            tokio::spawn(f);
-
-            Ok(http::Response::builder()
-                .header(
-                    CONTENT_DISPOSITION,
-                    HeaderValue::from_str(&format!(
-                        "attachment; filename*=UTF-8''{}",
-                        archive_name
-                    )).unwrap(),
-                )
-                .header(
-                    CONTENT_LENGTH,
-                    HeaderValue::from_str(&archive_size.to_string()).unwrap(),
-                )
-                .header(CONTENT_TYPE, "application/x-tar")
-                .body(Box::new(rx.map_err(|_| hyper::Error::Incomplete)) as Body)
-                .unwrap()
-                .into())
-        });
+                Ok(Response::builder()
+                    .header(
+                        CONTENT_DISPOSITION,
+                        HeaderValue::from_str(&format!(
+                            "attachment; filename*=UTF-8''{}",
+                            archive_name
+                        )).unwrap(),
+                    )
+                    .header(
+                        CONTENT_LENGTH,
+                        HeaderValue::from_str(&archive_size.to_string()).unwrap(),
+                    )
+                    .header(CONTENT_TYPE, "application/x-tar")
+                    .body(Body::wrap_stream(rx.map_err(|_| {
+                        Box::new(std::io::Error::new(
+                            std::io::ErrorKind::Interrupted,
+                            "incomplete",
+                        ))
+                    })))
+                    .unwrap())
+            })
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::Interrupted, "incomplete"));
         Box::new(b)
     }
 
@@ -386,18 +377,11 @@ impl RustyShare {
                 .into_owned()
         }
     }
-}
 
-impl Service for RustyShare {
-    type Request = Request;
-    type Response = Response<Box<Stream<Item = Bytes, Error = Self::Error> + Send>>;
-    type Error = hyper::Error;
-    type Future = Box<Future<Item = Self::Response, Error = Self::Error>>;
-
-    fn call(&self, req: Request) -> Self::Future {
-        type Body = Box<Stream<Item = Bytes, Error = hyper::Error> + Send>;
-
-        let req: http::Request<hyper::Body> = req.into();
+    fn call(
+        &self,
+        req: Request<Body>,
+    ) -> Box<Future<Item = Response<Body>, Error = std::io::Error> + Send + 'static> {
         let root = self.options.root.as_path();
         let path_: PathBuf = OsStr::from_bytes(
             Cow::from(percent_encoding::percent_decode(
@@ -407,24 +391,24 @@ impl Service for RustyShare {
         let path = root.join(Path::new(&path_).strip_prefix("/").unwrap());
         info!("{} {}", req.method(), req.uri().path());
         match *req.method() {
-            http::Method::GET => match self.handle_get(req, path, &path_) {
+            Method::GET => match self.handle_get(req, path, &path_) {
                 Ok(response) => response,
                 Err(e) => {
                     error!("{}", e);
-                    let response = http::Response::builder()
-                        .status(http::StatusCode::INTERNAL_SERVER_ERROR)
-                        .body(Box::new(stream::empty()) as Body)
+                    let response = Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body(Body::empty())
                         .unwrap();
-                    Box::new(future::ok(response.into()))
+                    Box::new(future::ok(response))
                 }
             },
-            http::Method::POST => self.handle_post(req, path, path_),
+            Method::POST => self.handle_post(req, path, path_),
             _ => {
-                let response = http::Response::builder()
-                    .status(http::StatusCode::METHOD_NOT_ALLOWED)
-                    .body(Box::new(stream::empty()) as Body)
+                let response = Response::builder()
+                    .status(StatusCode::METHOD_NOT_ALLOWED)
+                    .body(Body::empty())
                     .unwrap();
-                Box::new(future::ok(response.into()))
+                Box::new(future::ok(response))
             }
         }
     }
@@ -445,17 +429,14 @@ fn run() -> Result<(), Error> {
         pool: CpuPool::new_num_cpus(),
     };
 
-    let server = Http::new()
-        .bind(&addr, server::const_service(rusty_share))
-        .context("Unable to start server")?;
-    info!(
-        "Listening on http://{}",
-        server
-            .local_addr()
-            .with_context(|_| "Unable to retrieve the local address")?
-    );
+    let server = Server::bind(&addr).serve(move || {
+        let rusty_share = rusty_share.clone();
+        service::service_fn(move |req| rusty_share.call(req))
+    });
 
-    server.run().context("Unable to run server")?;
+    info!("Listening on http://{}", server.local_addr());
+
+    tokio::run(server.map_err(|e| eprintln!("server error: {}", e)));
     Ok(())
 }
 
