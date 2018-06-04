@@ -63,6 +63,8 @@ mod path_ext;
 mod pipe;
 mod share_entry;
 
+type BoxedFuture = Box<Future<Item = Response<Body>, Error = std::io::Error> + Send + 'static>;
+
 struct Archiver<W: Write> {
     builder: Builder<W>,
 }
@@ -202,8 +204,7 @@ impl RustyShare {
         req: Request<Body>,
         path: PathBuf,
         path_: &Path,
-    ) -> Result<Box<Future<Item = Response<Body>, Error = std::io::Error> + Send + 'static>, Error>
-    {
+    ) -> Result<BoxedFuture, Error> {
         let metadata = fs::metadata(&path)
             .with_context(|_| format!("Unable to read metadata of {}", path.display()))?;
         if metadata.is_dir() {
@@ -274,12 +275,7 @@ impl RustyShare {
         }
     }
 
-    fn handle_post(
-        &self,
-        req: Request<Body>,
-        path: PathBuf,
-        path_: PathBuf,
-    ) -> Box<Future<Item = Response<Body>, Error = std::io::Error> + Send + 'static> {
+    fn handle_post(&self, req: Request<Body>, path: PathBuf, path_: PathBuf) -> BoxedFuture {
         let pool = self.pool.clone();
         let b = req.into_body()
             .concat2()
@@ -378,10 +374,7 @@ impl RustyShare {
         }
     }
 
-    fn call(
-        &self,
-        req: Request<Body>,
-    ) -> Box<Future<Item = Response<Body>, Error = std::io::Error> + Send + 'static> {
+    fn call(&self, req: Request<Body>) -> BoxedFuture {
         let root = self.options.root.as_path();
         let path_: PathBuf = OsStr::from_bytes(
             Cow::from(percent_encoding::percent_decode(
