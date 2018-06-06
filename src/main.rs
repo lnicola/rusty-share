@@ -1,3 +1,4 @@
+#![feature(duration_as_u128)]
 #![feature(try_from)]
 
 extern crate bytes;
@@ -25,7 +26,6 @@ extern crate url;
 extern crate walkdir;
 
 use bytes::Bytes;
-use duration_ext::DurationExt;
 use failure::{Error, ResultExt};
 use futures::sync::mpsc;
 use futures::{future, Future, Sink, Stream};
@@ -55,7 +55,6 @@ use tar::Builder;
 use url::{form_urlencoded, percent_encoding};
 use walkdir::WalkDir;
 
-mod duration_ext;
 mod index_page;
 mod options;
 mod os_str_ext;
@@ -231,8 +230,8 @@ impl RustyShare {
                             let bytes = Bytes::from(rendered);
                             info!(
                                 "enumerate: {} ms, render: {} ms",
-                                enumerate_time.to_millis(),
-                                render_time.to_millis()
+                                enumerate_time.as_millis(),
+                                render_time.as_millis()
                             );
                             let len = bytes.len() as u64;
                             Response::builder()
