@@ -24,3 +24,7 @@ tar = "0.4"
 tokio = "0.1"
 url = "1.7"
 walkdir = "2.1"
+
+[profile.release]
+lto = true
+codegen-units = 1
