@@ -276,7 +276,8 @@ impl RustyShare {
 
     fn handle_post(&self, req: Request<Body>, path: PathBuf, path_: PathBuf) -> BoxedFuture {
         let pool = self.pool.clone();
-        let b = req.into_body()
+        let b = req
+            .into_body()
             .concat2()
             .and_then(move |b| {
                 let mut files = Vec::new();

@@ -55,3 +55,12 @@ td:nth-child(3),
 td:nth-child(4) {
     text-align: right;
 }
+
+.media-control {
+    font-family: 'Apple Color Emoji','Segoe UI Emoji','NotoColorEmoji','Noto Color Emoji','Segoe UI Symbol','Android Emoji','EmojiSymbols';
+    font-size: 24pt;
+}
+
+.hidden {
+    display: none;
+}

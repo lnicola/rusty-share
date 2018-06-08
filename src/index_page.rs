@@ -15,7 +15,6 @@ pub fn render(entries: Vec<ShareEntry>) -> Result<String, Error> {
         : doctype::HTML;
         html {
             head {
-                script { : Raw(include_str!("../assets/player.js")) }
                 style { : Raw(include_str!("../assets/style.css")); }
             }
             body {
@@ -28,12 +27,12 @@ pub fn render(entries: Vec<ShareEntry>) -> Result<String, Error> {
                             col(class="date");
                         }
                         tr(class="header") {
-                            th;
+                            th { }
                             th { : Raw("Name") }
                             th { : Raw("Size") }
                             th { : Raw("Last modified") }
                         }
-                        tr { td; td { a(href=Raw("..")) { : Raw("..") } } td; td; }
+                        tr { td { } td { a(href=Raw("..")) { : Raw("..") } } td { } td { } }
                         @ for ShareEntry { mut name, is_dir, size, date } in entries {
                             |tmpl| {
                                 let mut display_name = name;
@@ -62,9 +61,22 @@ pub fn render(entries: Vec<ShareEntry>) -> Result<String, Error> {
                     }
                     input(type="submit", value="Download");
                 }
+                div(id="player-section", class="hidden") {
+                    p(id="song-title");
+                    div {
+                        audio(id="player", preload="auto", controls);
+                    }
+                    div {
+                        button(id="shuffle", class="media-control", type="button") { : Raw("🔀") }
+                        button(id="prev", class="media-control", type="button") { : Raw("⏮") }
+                        button(id="next", class="media-control", type="button") { : Raw("⏭") }
+                    }
+                }
             }
+            script { : Raw(include_str!("../assets/player.js")) }
         }
     };
-    Ok(page.into_string()
+    Ok(page
+        .into_string()
         .with_context(|_| "Unable to render index page")?)
 }
