@@ -1,5 +1,7 @@
 #![feature(duration_as_u128)]
 #![feature(try_from)]
+#![feature(allocator_api)]
+#![feature(global_allocator)]
 
 extern crate bytes;
 extern crate bytesize;
@@ -42,6 +44,7 @@ use pipe::Pipe;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
 use share_entry::ShareEntry;
+use std::alloc::System;
 use std::borrow::Cow;
 use std::convert::TryFrom;
 use std::ffi::OsStr;
@@ -61,6 +64,9 @@ mod os_str_ext;
 mod path_ext;
 mod pipe;
 mod share_entry;
+
+#[global_allocator]
+static A: System = System;
 
 type BoxedFuture = Box<Future<Item = Response<Body>, Error = std::io::Error> + Send + 'static>;
 
