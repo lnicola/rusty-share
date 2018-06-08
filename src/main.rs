@@ -27,7 +27,6 @@ extern crate tokio;
 extern crate url;
 extern crate walkdir;
 
-use bytes::Bytes;
 use failure::{Error, ResultExt};
 use futures::sync::mpsc;
 use futures::{future, Future, Sink, Stream};
@@ -233,21 +232,15 @@ impl RustyShare {
                             let render_start = Instant::now();
                             let rendered = index_page::render(entries).unwrap();
                             let render_time = Instant::now() - render_start;
-                            let bytes = Bytes::from(rendered);
                             info!(
                                 "enumerate: {} ms, render: {} ms",
                                 enumerate_time.as_millis(),
                                 render_time.as_millis()
                             );
-                            let len = bytes.len() as u64;
                             Response::builder()
                                 .status(StatusCode::OK)
-                                .header("Content-Type", "text/html; charset=utf-8")
-                                .header(
-                                    "Content-Length",
-                                    HeaderValue::from_str(&len.to_string()).unwrap(),
-                                )
-                                .body(bytes.into())
+                                .header(CONTENT_TYPE, "text/html; charset=utf-8")
+                                .body(Body::from(rendered))
                                 .unwrap()
                         }
                         Err(e) => {
