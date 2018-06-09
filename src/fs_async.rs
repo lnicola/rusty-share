@@ -1,58 +1,45 @@
 use futures::{Async, Future, Poll};
 use std::fs::{self, Metadata};
 use std::io;
-use std::path::Path;
+use std::path::PathBuf;
+use std::result::Result;
 use tokio_threadpool;
 
-fn blocking_io<F, T>(f: F) -> Poll<T, io::Error>
+pub struct BlockingFuture<F, T, E>(Option<F>)
 where
-    F: FnOnce() -> io::Result<T>,
+    F: FnOnce() -> Result<T, E>;
+
+impl<F, T, E> BlockingFuture<F, T, E>
+where
+    F: FnOnce() -> Result<T, E>,
 {
-    match tokio_threadpool::blocking(f) {
-        Ok(Async::Ready(Ok(v))) => Ok(v.into()),
-        Ok(Async::Ready(Err(err))) => Err(err),
-        Ok(Async::NotReady) => Ok(Async::NotReady),
-        Err(_) => Err(blocking_err()),
+    pub fn new(f: F) -> Self {
+        BlockingFuture::<F, T, E>(Some(f))
     }
 }
 
-pub fn blocking_err() -> io::Error {
-    io::Error::new(
-        io::ErrorKind::Other,
-        "`blocking` annotated I/O must be called \
-         from the context of the Tokio runtime.",
-    )
-}
-
-#[derive(Debug)]
-pub struct MetadataFuture<P> {
-    path: P,
-}
-
-impl<P> MetadataFuture<P>
+impl<F, T, E> Future for BlockingFuture<F, T, E>
 where
-    P: AsRef<Path> + Send + 'static,
+    F: FnOnce() -> Result<T, E>,
 {
-    pub(crate) fn new(path: P) -> Self {
-        MetadataFuture { path }
-    }
-}
-
-impl<P> Future for MetadataFuture<P>
-where
-    P: AsRef<Path> + Send + 'static,
-{
-    type Item = Metadata;
-    type Error = io::Error;
+    type Item = T;
+    type Error = E;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        blocking_io(|| fs::metadata(&self.path))
+        let f = self.0.take().expect("future already completed");
+
+        match tokio_threadpool::blocking(f) {
+            Ok(Async::Ready(Ok(v))) => Ok(v.into()),
+            Ok(Async::Ready(Err(err))) => Err(err),
+            Ok(Async::NotReady) => Ok(Async::NotReady),
+            Err(_) => panic!(
+                "`blocking` annotated I/O must be called \
+                 from the context of the Tokio runtime."
+            ),
+        }
     }
 }
 
-pub fn metadata<P>(path: P) -> MetadataFuture<P>
-where
-    P: AsRef<Path> + Send + 'static,
-{
-    MetadataFuture::new(path)
+pub fn metadata(path: PathBuf) -> impl Future<Item = Metadata, Error = io::Error> {
+    BlockingFuture::new(|| fs::metadata(path))
 }

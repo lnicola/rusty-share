@@ -1,3 +1,5 @@
+#![feature(proc_macro)]
+#![feature(generators)]
 #![feature(duration_as_u128)]
 #![feature(try_from)]
 #![feature(allocator_api)]
@@ -8,7 +10,8 @@ extern crate bytesize;
 extern crate chrono;
 extern crate chrono_humanize;
 extern crate failure;
-extern crate futures;
+// extern crate futures;
+extern crate futures_await as futures;
 extern crate futures_cpupool;
 #[macro_use]
 extern crate horrorshow;
@@ -29,8 +32,9 @@ extern crate url;
 extern crate walkdir;
 
 use failure::{Error, ResultExt};
+use futures::prelude::{async, await};
 use futures::sync::mpsc;
-use futures::{future, Async, Future, Poll, Stream};
+use futures::{future, Future, Stream};
 use futures_cpupool::CpuPool;
 use http::header::{HeaderValue, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE};
 use http::{HeaderMap, Method, Request, Response};
@@ -49,7 +53,7 @@ use std::borrow::Cow;
 use std::convert::TryFrom;
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry, File};
-use std::io::{self, ErrorKind, Read, Seek, SeekFrom, Write};
+use std::io::{self, ErrorKind, Write};
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -205,53 +209,95 @@ struct RustyShare {
     pool: CpuPool,
 }
 
+// pub struct SeekFuture {
+//     pos: SeekFrom,
+//     inner: Option<tokio::fs::File>,
+// }
+
+// impl Future for SeekFuture {
+//     type Item = (tokio::fs::File, u64);
+//     type Error = io::Error;
+
+//     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+//         let mut inner = self.inner.take().unwrap();
+
+//         match inner.poll_seek(self.pos) {
+//             Ok(Async::Ready(seek)) => Ok(Async::Ready((inner, seek))),
+//             Ok(_) => Ok(Async::NotReady),
+//             Err(e) => Err(e),
+//         }
+//     }
+// }
+
+// trait TokioFsFileExt: Sized {
+//     fn seek(self, pos: SeekFrom) -> SeekFuture;
+// }
+
+// impl TokioFsFileExt for tokio::fs::File {
+//     fn seek(self, pos: SeekFrom) -> SeekFuture {
+//         SeekFuture {
+//             pos,
+//             inner: Some(self),
+//         }
+//     }
+// }
+
 impl RustyShare {
-    fn handle_get(&self, req: Request<Body>, path: PathBuf, path_: PathBuf) -> BoxedFuture {
-        let pool = self.pool.clone();
-        let f = fs_async::metadata(path.clone())
-            .map_err(|e| e.into())
-            .and_then(move |metadata| {
-                if metadata.is_dir() {
-                    if !path_.to_str().unwrap().ends_with('/') {
-                        Box::new(future::ok(response::found(
-                            &(path_.to_str().unwrap().to_owned() + "/"),
-                        )))
-                    } else {
-                        let f = get_dir_index_async(path.clone())
-                            .and_then(|rendered| future::ok(response::page(rendered)))
-                            .or_else(|e| {
-                                error!("{}", e);
-                                future::ok(response::not_found())
-                            });
-                        Box::new(f) as BoxedFuture
-                    }
-                } else {
-                    Box::new(pool.spawn_fn(move || {
-                        let mut f = File::open(&path)?;
-                        let mut buf = [0; 16];
-                        let len = f.read(&mut buf)?;
-                        let buf = &buf[0..len];
-                        f.seek(SeekFrom::Start(0))?;
-                        let mut headers = HeaderMap::new();
-                        if let Some(mime) = buf.sniff_mime_type() {
-                            headers.insert(CONTENT_TYPE, mime.parse().unwrap());
-                        }
-                        let f = ChunkedReadFile::new(f, None, headers)?;
-                        Ok(http_serve::serve(f, &req))
-                    }))
+    #[async]
+    fn handle_get_dir(path: PathBuf, path_: PathBuf) -> Result<Response<Body>, Error> {
+        if !path_.to_str().unwrap().ends_with('/') {
+            Ok(response::found(&(path_.to_str().unwrap().to_owned() + "/")))
+        } else {
+            let rendered = await!(fs_async::BlockingFuture::new(move || get_dir_index(&path)));
+            match rendered {
+                Ok(rendered) => Ok(response::page(rendered)),
+                Err(e) => {
+                    error!("{}", e);
+                    Ok(response::not_found())
                 }
-            })
-            .or_else(|e| {
+            }
+        }
+    }
+
+    #[async]
+    fn handle_get_file(req: Request<Body>, path: PathBuf) -> Result<Response<Body>, Error> {
+        let mut file = await!(tokio::fs::File::open(path.clone()))?;
+        let mut buf = bytes::BytesMut::with_capacity(16);
+        let (_, buf) = await!(tokio::io::read_exact(file, buf))?;
+        let file = await!(fs_async::BlockingFuture::new(move || File::open(&path)))?;
+        // let (file, _) = await!(file.seek(SeekFrom::Start(0)))?;
+
+        let mut headers = HeaderMap::new();
+        if let Some(mime) = buf.sniff_mime_type() {
+            headers.insert(CONTENT_TYPE, mime.parse().unwrap());
+        }
+        let crf = ChunkedReadFile::new(file, None, headers)?;
+        Ok(http_serve::serve(crf, &req))
+    }
+
+    #[async]
+    fn handle_get(
+        &self,
+        req: Request<Body>,
+        path: PathBuf,
+        path_: PathBuf,
+    ) -> Result<Response<Body>, Error> {
+        match await!(fs_async::metadata(path.clone())) {
+            Ok(metadata) => if metadata.is_dir() {
+                await!(Self::handle_get_dir(path, path_))
+            } else {
+                await!(Self::handle_get_file(req, path))
+            },
+            Err(e) => {
                 error!("{}", e);
-                Box::new(future::ok(response::not_found()))
-            });
-        Box::new(f)
+                Ok(response::not_found())
+            }
+        }
     }
 
     fn handle_post(&self, req: Request<Body>, path: PathBuf, path_: PathBuf) -> BoxedFuture {
         let pool = self.pool.clone();
-        let b = req
-            .into_body()
+        let b = req.into_body()
             .concat2()
             .and_then(move |b| {
                 let mut files = Vec::new();
@@ -350,7 +396,7 @@ impl RustyShare {
         let path = root.join(Path::new(&path_).strip_prefix("/").unwrap());
         info!("{} {}", req.method(), req.uri().path());
         match *req.method() {
-            Method::GET => self.handle_get(req, path, path_.clone()),
+            Method::GET => Box::new(self.handle_get(req, path, path_.clone())) as BoxedFuture,
             Method::POST => self.handle_post(req, path, path_),
             _ => Box::new(future::ok(response::method_not_allowed())),
         }
@@ -403,7 +449,7 @@ fn dir_entries(path: &Path) -> Result<impl Iterator<Item = DirEntry>, Error> {
         .filter(|file| !is_hidden(&file.file_name())))
 }
 
-fn get_dir_index(path: &Path) -> Result<Vec<ShareEntry>, Error> {
+fn get_dir_entries(path: &Path) -> Result<Vec<ShareEntry>, Error> {
     let mut entries = dir_entries(path)?
         .collect::<Vec<_>>()
         .into_par_iter()
@@ -428,53 +474,17 @@ fn is_hidden(path: &OsStr) -> bool {
     path.as_bytes().starts_with(b".")
 }
 
-#[derive(Debug)]
-pub struct DirIndexFuture<P> {
-    path: P,
-}
-
-impl<P> DirIndexFuture<P>
-where
-    P: AsRef<Path> + Send + 'static,
-{
-    pub(crate) fn new(path: P) -> Self {
-        DirIndexFuture { path }
-    }
-}
-
-impl<P> Future for DirIndexFuture<P>
-where
-    P: AsRef<Path> + Send + 'static,
-{
-    type Item = String;
-    type Error = Error;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        match tokio_threadpool::blocking(|| {
-            let enumerate_start = Instant::now();
-            let entries = get_dir_index(&self.path.as_ref())?;
-            let render_start = Instant::now();
-            let enumerate_time = render_start - enumerate_start;
-            let rendered = index_page::render(entries).unwrap();
-            let render_time = Instant::now() - render_start;
-            info!(
-                "enumerate: {} ms, render: {} ms",
-                enumerate_time.as_millis(),
-                render_time.as_millis()
-            );
-            Ok(rendered)
-        }) {
-            Ok(Async::Ready(Ok(v))) => Ok(v.into()),
-            Ok(Async::Ready(Err(err))) => Err(err),
-            Ok(Async::NotReady) => Ok(Async::NotReady),
-            Err(_) => Err(fs_async::blocking_err().into()),
-        }
-    }
-}
-
-pub fn get_dir_index_async<P>(path: P) -> DirIndexFuture<P>
-where
-    P: AsRef<Path> + Send + 'static,
-{
-    DirIndexFuture::new(path)
+fn get_dir_index(path: &Path) -> Result<String, Error> {
+    let enumerate_start = Instant::now();
+    let entries = get_dir_entries(&path)?;
+    let render_start = Instant::now();
+    let enumerate_time = render_start - enumerate_start;
+    let rendered = index_page::render(entries).unwrap();
+    let render_time = Instant::now() - render_start;
+    info!(
+        "enumerate: {} ms, render: {} ms",
+        enumerate_time.as_millis(),
+        render_time.as_millis()
+    );
+    Ok(rendered)
 }
