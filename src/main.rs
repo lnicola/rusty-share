@@ -29,7 +29,7 @@ extern crate walkdir;
 
 use failure::{Error, ResultExt};
 use futures::sync::mpsc;
-use futures::{future, Future, Sink, Stream};
+use futures::{future, Future, Stream};
 use futures_cpupool::CpuPool;
 use http::header::{HeaderValue, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE, LOCATION};
 use http::{HeaderMap, Method, Request, Response, StatusCode};
@@ -311,9 +311,9 @@ impl RustyShare {
 
                 let archive_name = Self::get_archive_name(&path_, &files);
 
-                let (tx, rx) = mpsc::channel(10);
+                let (tx, rx) = mpsc::channel(0);
                 let mut archive_size = 1024;
-                let pipe = Pipe::new(tx.wait());
+                let pipe = Pipe::new(tx);
                 let mut archiver = Archiver::new(Builder::new(pipe));
                 for file in &files {
                     archive_size += archiver.measure_entry(&path, file);

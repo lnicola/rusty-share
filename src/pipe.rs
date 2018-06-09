@@ -1,5 +1,5 @@
 use bytes::{BufMut, Bytes, BytesMut};
-use futures::sink::Wait;
+use futures::sink::{Sink, Wait};
 use futures::sync::mpsc::Sender;
 use std::io::{Error, ErrorKind, Result, Write};
 
@@ -9,9 +9,9 @@ pub struct Pipe {
 }
 
 impl Pipe {
-    pub fn new(destination: Wait<Sender<Bytes>>) -> Self {
+    pub fn new(destination: Sender<Bytes>) -> Self {
         Pipe {
-            dest: destination,
+            dest: destination.wait(),
             bytes: BytesMut::new(),
         }
     }
