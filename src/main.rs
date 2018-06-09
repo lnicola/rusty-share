@@ -48,7 +48,7 @@ use std::borrow::Cow;
 use std::convert::TryFrom;
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry, File};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{self, ErrorKind, Read, Seek, SeekFrom, Write};
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -67,7 +67,7 @@ mod share_entry;
 #[global_allocator]
 static A: System = System;
 
-type BoxedFuture = Box<Future<Item = Response<Body>, Error = std::io::Error> + Send + 'static>;
+type BoxedFuture = Box<Future<Item = Response<Body>, Error = Error> + Send + 'static>;
 
 struct Archiver<W: Write> {
     builder: Builder<W>,
@@ -342,14 +342,11 @@ impl RustyShare {
                     )
                     .header(CONTENT_TYPE, "application/x-tar")
                     .body(Body::wrap_stream(rx.map_err(|_| {
-                        Box::new(std::io::Error::new(
-                            std::io::ErrorKind::Interrupted,
-                            "incomplete",
-                        ))
+                        Error::from(io::Error::new(ErrorKind::UnexpectedEof, "incomplete")).compat()
                     })))
                     .unwrap())
             })
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::Interrupted, "incomplete"));
+            .map_err(|e| e.into());
         Box::new(b)
     }
 
@@ -423,7 +420,7 @@ fn run() -> Result<(), Error> {
 
     let server = Server::bind(&addr).serve(move || {
         let rusty_share = rusty_share.clone();
-        service::service_fn(move |req| rusty_share.call(req))
+        service::service_fn(move |req| rusty_share.call(req).map_err(|e| e.compat()))
     });
 
     info!("Listening on http://{}", server.local_addr());
