@@ -2,7 +2,6 @@
 authors = ["Laurentiu Nicola <lnicola@dend.ro>"]
 name = "rusty-share"
 version = "0.1.0"
-
 [dependencies]
 bytes = "0.4"
 bytesize = "0.2"
@@ -13,7 +12,6 @@ futures = "0.1"
 futures-cpupool = "0.1"
 horrorshow = "0.6"
 http = "0.1"
-http-serve = { git = "https://github.com/scottlamb/http-serve/" }
 hyper = "0.12"
 log = "0.4"
 mime-sniffer = "0.1"
@@ -22,9 +20,12 @@ rayon = "1.0"
 structopt = "0.2"
 tar = "0.4"
 tokio = "0.1"
+tokio-threadpool = "0.1.4"
 url = "1.7"
 walkdir = "2.1"
 
+[dependencies.http-serve]
+git = "https://github.com/scottlamb/http-serve/"
 [profile.release]
-lto = true
 codegen-units = 1
+lto = true
