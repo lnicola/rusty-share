@@ -56,21 +56,15 @@ document.addEventListener("DOMContentLoaded", function () {
     function next() {
         if (currentIndex < playlist.length - 1) {
             currentIndex++;
-            let wasPlaying = !audio.paused;
             change();
-            if (wasPlaying) {
-                audio.play();
-            }
+            audio.play();
         }
     }
     function prev() {
         if (currentIndex > 0) {
             currentIndex--;
-            let wasPlaying = !audio.paused;
             change();
-            if (wasPlaying) {
-                audio.play();
-            }
+            audio.play();
         }
     }
     audio.addEventListener("ended", next);
