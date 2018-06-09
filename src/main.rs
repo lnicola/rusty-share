@@ -12,7 +12,6 @@ extern crate chrono_humanize;
 extern crate failure;
 // extern crate futures;
 extern crate futures_await as futures;
-extern crate futures_cpupool;
 #[macro_use]
 extern crate horrorshow;
 extern crate http;
@@ -35,7 +34,6 @@ use failure::{Error, ResultExt};
 use futures::prelude::{async, await};
 use futures::sync::mpsc;
 use futures::{future, Future, Stream};
-use futures_cpupool::CpuPool;
 use http::header::{HeaderValue, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE};
 use http::{HeaderMap, Method, Request, Response};
 use http_serve::ChunkedReadFile;
@@ -116,7 +114,7 @@ impl<W: Write> Archiver<W> {
         Ok(())
     }
 
-    fn entry_size(&mut self, root: &Path, entry: &walkdir::DirEntry) -> Result<u64, Error>
+    fn entry_size(root: &Path, entry: &walkdir::DirEntry) -> Result<u64, Error>
     where
         W: Write,
     {
@@ -159,7 +157,7 @@ impl<W: Write> Archiver<W> {
         let mut total_size = 0;
         for e in entries {
             match e {
-                Ok(e) => match self.entry_size(root.as_ref(), &e) {
+                Ok(e) => match Self::entry_size(root.as_ref(), &e) {
                     Err(e) => error!("{}", e),
                     Ok(size) => {
                         total_size += size;
@@ -206,7 +204,6 @@ impl<W: Write> Archiver<W> {
 #[derive(Clone)]
 struct RustyShare {
     options: Options,
-    pool: CpuPool,
 }
 
 // pub struct SeekFuture {
@@ -290,12 +287,7 @@ fn handle_get(req: Request<Body>, path: PathBuf, path_: PathBuf) -> Result<Respo
 }
 
 #[async]
-fn handle_post(
-    pool: CpuPool,
-    req: Request<Body>,
-    path: PathBuf,
-    path_: PathBuf,
-) -> Result<Response<Body>, Error> {
+fn handle_post(req: Request<Body>, path: PathBuf, path_: PathBuf) -> Result<Response<Body>, Error> {
     let b = await!(req.into_body().concat2())?;
 
     let mut files = Vec::new();
@@ -379,16 +371,16 @@ fn get_archive_name(path_: &Path, files: &[PathBuf]) -> String {
 impl RustyShare {
     fn call(&self, req: Request<Body>) -> BoxedFuture {
         let root = self.options.root.as_path();
-        let path_: PathBuf = OsStr::from_bytes(
+        let path_ = PathBuf::from(OsStr::from_bytes(
             Cow::from(percent_encoding::percent_decode(
                 req.uri().path().as_bytes(),
             )).as_ref(),
-        ).into();
+        ));
         let path = root.join(Path::new(&path_).strip_prefix("/").unwrap());
         info!("{} {}", req.method(), req.uri().path());
         match *req.method() {
             Method::GET => Box::new(handle_get(req, path, path_.clone())) as BoxedFuture,
-            Method::POST => Box::new(handle_post(self.pool.clone(), req, path, path_)),
+            Method::POST => Box::new(handle_post(req, path, path_)),
             _ => Box::new(future::ok(response::method_not_allowed())),
         }
     }
@@ -404,10 +396,7 @@ fn run() -> Result<(), Error> {
             .with_context(|_| "Unable to parse listen address")?,
         options.port,
     );
-    let rusty_share = RustyShare {
-        options,
-        pool: CpuPool::new_num_cpus(),
-    };
+    let rusty_share = RustyShare { options };
 
     let server = Server::bind(&addr).serve(move || {
         let rusty_share = rusty_share.clone();
