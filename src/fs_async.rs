@@ -29,10 +29,10 @@ where
         let f = self.0.take().expect("future already completed");
 
         match tokio_threadpool::blocking(f) {
-            Ok(Async::Ready(Ok(v))) => Ok(v.into()),
+            Ok(Async::Ready(Ok(v))) => Ok(Async::Ready(v)),
             Ok(Async::Ready(Err(err))) => Err(err),
             Ok(Async::NotReady) => Ok(Async::NotReady),
-            Err(_) => panic!(
+            _ => panic!(
                 "`blocking` annotated I/O must be called \
                  from the context of the Tokio runtime."
             ),

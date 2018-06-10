@@ -10,7 +10,6 @@ extern crate bytesize;
 extern crate chrono;
 extern crate chrono_humanize;
 extern crate failure;
-// extern crate futures;
 extern crate futures_await as futures;
 #[macro_use]
 extern crate horrorshow;
@@ -34,8 +33,8 @@ use failure::{Error, ResultExt};
 use futures::prelude::{async, await};
 use futures::sync::mpsc;
 use futures::{future, Future, Stream};
-use http::header::{HeaderValue, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE};
-use http::{HeaderMap, Method, Request, Response};
+use http::header::CONTENT_TYPE;
+use http::{HeaderMap, Method};
 use http_serve::ChunkedReadFile;
 use hyper::{service, Body, Server};
 use mime_sniffer::MimeTypeSniffer;
@@ -72,7 +71,8 @@ mod share_entry;
 #[global_allocator]
 static A: System = System;
 
-type BoxedFuture = Box<Future<Item = Response<Body>, Error = Error> + Send + 'static>;
+type Request = http::Request<Body>;
+type Response = http::Response<Body>;
 
 struct Archiver<W: Write> {
     builder: Builder<W>,
@@ -187,10 +187,8 @@ impl<W: Write> Archiver<W> {
         }
     }
 
-    fn finish(&mut self) {
-        if let Err(e) = self.builder.finish() {
-            error!("{}", e);
-        }
+    fn finish(&mut self) -> io::Result<()> {
+        self.builder.finish()
     }
 
     fn is_hidden(entry: &walkdir::DirEntry) -> bool {
@@ -240,7 +238,7 @@ struct RustyShare {
 // }
 
 #[async]
-fn handle_get_dir(path: PathBuf, path_: PathBuf) -> Result<Response<Body>, Error> {
+fn handle_get_dir(path: PathBuf, path_: PathBuf) -> Result<Response, Error> {
     if !path_.to_str().unwrap().ends_with('/') {
         Ok(response::found(&(path_.to_str().unwrap().to_owned() + "/")))
     } else {
@@ -256,7 +254,7 @@ fn handle_get_dir(path: PathBuf, path_: PathBuf) -> Result<Response<Body>, Error
 }
 
 #[async]
-fn handle_get_file(req: Request<Body>, path: PathBuf) -> Result<Response<Body>, Error> {
+fn handle_get_file(req: Request, path: PathBuf) -> Result<Response, Error> {
     let mut file = await!(tokio::fs::File::open(path.clone()))?;
     let mut buf = [0; 16];
     let (_, buf) = await!(tokio::io::read_exact(file, buf))?;
@@ -272,7 +270,7 @@ fn handle_get_file(req: Request<Body>, path: PathBuf) -> Result<Response<Body>, 
 }
 
 #[async]
-fn handle_get(req: Request<Body>, path: PathBuf, path_: PathBuf) -> Result<Response<Body>, Error> {
+fn handle_get(req: Request, path: PathBuf, path_: PathBuf) -> Result<Response, Error> {
     match await!(fs_async::metadata(path.clone())) {
         Ok(metadata) => if metadata.is_dir() {
             await!(handle_get_dir(path, path_))
@@ -286,36 +284,22 @@ fn handle_get(req: Request<Body>, path: PathBuf, path_: PathBuf) -> Result<Respo
     }
 }
 
-#[async]
-fn handle_post(req: Request<Body>, path: PathBuf, path_: PathBuf) -> Result<Response<Body>, Error> {
-    let b = await!(req.into_body().concat2())?;
-
+fn decode_request(form: &[u8]) -> Option<Vec<PathBuf>> {
     let mut files = Vec::new();
-    for (name, value) in form_urlencoded::parse(&b) {
+    for (name, value) in form_urlencoded::parse(&form) {
         if name == "s" {
             let value: PathBuf = OsStr::from_bytes(
                 Cow::<[u8]>::from(percent_encoding::percent_decode(value.as_bytes())).as_ref(),
             ).into();
             files.push(value)
         } else {
-            return Ok(response::bad_request());
+            return None;
         }
     }
+    Some(files)
+}
 
-    if files.is_empty() {
-        for entry in dir_entries(&path)? {
-            let path = entry.path();
-            let file_name = path.file_name().unwrap();
-            files.push(file_name.into());
-        }
-    } else {
-        for file in &files {
-            info!("{}", file.display());
-        }
-    }
-
-    let archive_name = get_archive_name(&path_, &files);
-
+fn get_archive(path: PathBuf, files: Vec<PathBuf>) -> (u64, Body) {
     let (tx, rx) = mpsc::channel(0);
     let mut archive_size = 1024;
     let pipe = Pipe::new(tx);
@@ -327,25 +311,44 @@ fn handle_post(req: Request<Body>, path: PathBuf, path_: PathBuf) -> Result<Resp
         for file in &files {
             archiver.add_to_archive(&path, file);
         }
-        archiver.finish();
+        archiver.finish()?;
 
         Ok(())
-    });
+    }).map_err(|e: io::Error| error!("{}", e));
     tokio::spawn(f);
 
-    let rx = rx.map_err(|_| {
-        Error::from(io::Error::new(ErrorKind::UnexpectedEof, "incomplete")).compat()
-    });
+    let rx = rx
+        .map_err(|_| Error::from(io::Error::new(ErrorKind::UnexpectedEof, "incomplete")).compat());
 
-    let content_disposition =
-        HeaderValue::from_str(&format!("attachment; filename*=UTF-8''{}", archive_name)).unwrap();
-    let content_length = HeaderValue::from_str(&archive_size.to_string()).unwrap();
-    Ok(Response::builder()
-        .header(CONTENT_DISPOSITION, content_disposition)
-        .header(CONTENT_LENGTH, content_length)
-        .header(CONTENT_TYPE, "application/x-tar")
-        .body(Body::wrap_stream(rx))
-        .unwrap())
+    (archive_size, Body::wrap_stream(rx))
+}
+
+#[async]
+fn handle_post(req: Request, path: PathBuf, path_: PathBuf) -> Result<Response, Error> {
+    let b = await!(req.into_body().concat2())?;
+
+    let response = if let Some(mut files) = decode_request(&b) {
+        if files.is_empty() {
+            for entry in dir_entries(&path)? {
+                let path = entry.path();
+                let file_name = path.file_name().unwrap();
+                files.push(file_name.into());
+            }
+        } else {
+            for file in &files {
+                info!("{}", file.display());
+            }
+        }
+
+        let archive_name = get_archive_name(&path_, &files);
+
+        let (content_length, body) = get_archive(path, files);
+        response::archive(content_length, body, &archive_name)
+    } else {
+        response::bad_request()
+    };
+
+    Ok(response)
 }
 
 fn get_archive_name(path_: &Path, files: &[PathBuf]) -> String {
@@ -369,7 +372,7 @@ fn get_archive_name(path_: &Path, files: &[PathBuf]) -> String {
 }
 
 impl RustyShare {
-    fn call(&self, req: Request<Body>) -> BoxedFuture {
+    fn call(&self, req: Request) -> Box<Future<Item = Response, Error = Error> + Send + 'static> {
         let root = self.options.root.as_path();
         let path_ = PathBuf::from(OsStr::from_bytes(
             Cow::from(percent_encoding::percent_decode(
@@ -379,7 +382,7 @@ impl RustyShare {
         let path = root.join(Path::new(&path_).strip_prefix("/").unwrap());
         info!("{} {}", req.method(), req.uri().path());
         match *req.method() {
-            Method::GET => Box::new(handle_get(req, path, path_.clone())) as BoxedFuture,
+            Method::GET => Box::new(handle_get(req, path, path_.clone())),
             Method::POST => Box::new(handle_post(req, path, path_)),
             _ => Box::new(future::ok(response::method_not_allowed())),
         }
