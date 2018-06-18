@@ -30,8 +30,8 @@ extern crate url;
 extern crate walkdir;
 
 use failure::{Error, ResultExt};
-use fs_async::FileExt;
-use futures::prelude::{async, await};
+use fs_async::{blocking_io, FileExt};
+use futures::prelude::{async, await, Poll};
 use futures::sync::mpsc;
 use futures::{future, Future, Stream};
 use http::header::CONTENT_TYPE;
@@ -276,18 +276,54 @@ fn get_archive(path: PathBuf, files: Vec<PathBuf>) -> (u64, Body) {
     for file in &files {
         archive_size += archiver.measure_entry(&path, file);
     }
-    let f = fs_async::BlockingFuture::new(move || {
-        for file in &files {
-            archiver.add_to_archive(&path, file);
-        }
-        archiver.finish()
-    }).map_err(|e: io::Error| error!("{}", e));
+    let f = send_archive(archiver, path, files).map_err(|e: io::Error| error!("{}", e));
     tokio::spawn(f);
 
     let rx = rx
         .map_err(|_| Error::from(io::Error::new(ErrorKind::UnexpectedEof, "incomplete")).compat());
 
     (archive_size, Body::wrap_stream(rx))
+}
+
+fn send_archive<W>(
+    archiver: Archiver<W>,
+    path: PathBuf,
+    files: Vec<PathBuf>,
+) -> SendArchiveFuture<W>
+where
+    W: Write,
+{
+    SendArchiveFuture {
+        archiver,
+        path,
+        files,
+    }
+}
+
+struct SendArchiveFuture<W>
+where
+    W: Write,
+{
+    archiver: Archiver<W>,
+    path: PathBuf,
+    files: Vec<PathBuf>,
+}
+
+impl<W> Future for SendArchiveFuture<W>
+where
+    W: Write,
+{
+    type Item = ();
+    type Error = io::Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        blocking_io(|| {
+            for file in &self.files {
+                self.archiver.add_to_archive(&self.path, file);
+            }
+            self.archiver.finish()
+        })
+    }
 }
 
 #[async]

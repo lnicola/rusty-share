@@ -92,7 +92,7 @@ impl FileExt for tokio::fs::File {
     }
 }
 
-fn blocking_io<F, T>(f: F) -> Poll<T, io::Error>
+pub fn blocking_io<F, T>(f: F) -> Poll<T, io::Error>
 where
     F: FnOnce() -> io::Result<T>,
 {
