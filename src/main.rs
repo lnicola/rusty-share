@@ -31,7 +31,7 @@ extern crate walkdir;
 
 use failure::{Error, ResultExt};
 use fs_async::{blocking_io, FileExt};
-use futures::prelude::{async, await, Poll};
+use futures::prelude::{async, await, Async, Poll};
 use futures::sync::mpsc;
 use futures::{future, Future, Stream};
 use http::header::CONTENT_TYPE;
@@ -211,7 +211,7 @@ fn handle_get_dir(path: PathBuf, path_: PathBuf) -> Result<Response, Error> {
     if !path_.to_str().unwrap().ends_with('/') {
         Ok(response::found(&(path_.to_str().unwrap().to_owned() + "/")))
     } else {
-        let rendered = await!(fs_async::BlockingFuture::new(move || get_dir_index(&path)));
+        let rendered = await!(get_dir_index_async(path));
         match rendered {
             Ok(rendered) => Ok(response::page(rendered)),
             Err(e) => {
@@ -482,4 +482,33 @@ fn get_dir_index(path: &Path) -> Result<String, Error> {
         render_time.as_millis()
     );
     Ok(rendered)
+}
+
+fn get_dir_index_async(path: PathBuf) -> GetDirIndexFuture {
+    GetDirIndexFuture { path }
+}
+
+struct GetDirIndexFuture {
+    path: PathBuf,
+}
+
+impl Future for GetDirIndexFuture {
+    type Item = String;
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        blocking(|| get_dir_index(&self.path))
+    }
+}
+
+pub fn blocking<F, T>(f: F) -> Poll<T, Error>
+where
+    F: FnOnce() -> Result<T, Error>,
+{
+    match tokio_threadpool::blocking(f) {
+        Ok(Async::Ready(Ok(v))) => Ok(v.into()),
+        Ok(Async::Ready(Err(err))) => Err(err),
+        Ok(Async::NotReady) => Ok(Async::NotReady),
+        Err(_) => Err(fs_async::blocking_err().into()),
+    }
 }

@@ -104,7 +104,7 @@ where
     }
 }
 
-fn blocking_err() -> io::Error {
+pub fn blocking_err() -> io::Error {
     io::Error::new(
         ErrorKind::Other,
         "`blocking` annotated I/O must be called from the context of the Tokio runtime.",
