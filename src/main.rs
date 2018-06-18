@@ -30,8 +30,8 @@ extern crate url;
 extern crate walkdir;
 
 use failure::{Error, ResultExt};
-use fs_async::FileExt;
-use futures::prelude::{async, await, Poll};
+use fs_async::{BlockingFuture, FileExt};
+use futures::prelude::{async, await};
 use futures::sync::mpsc;
 use futures::{future, Future, Stream};
 use http::header::CONTENT_TYPE;
@@ -211,7 +211,7 @@ fn handle_get_dir(path: PathBuf, path_: PathBuf) -> Result<Response, Error> {
     if !path_.to_str().unwrap().ends_with('/') {
         Ok(response::found(&(path_.to_str().unwrap().to_owned() + "/")))
     } else {
-        let rendered = await!(get_dir_index_async(path));
+        let rendered = await!(BlockingFuture::new(move || get_dir_index(&path)));
         match rendered {
             Ok(rendered) => Ok(response::page(rendered)),
             Err(e) => {
@@ -276,54 +276,18 @@ fn get_archive(path: PathBuf, files: Vec<PathBuf>) -> (u64, Body) {
     for file in &files {
         archive_size += archiver.measure_entry(&path, file);
     }
-    let f = send_archive(archiver, path, files).map_err(|e: io::Error| error!("{}", e));
+    let f = BlockingFuture::new(move || {
+        for file in &files {
+            archiver.add_to_archive(&path, file);
+        }
+        archiver.finish()
+    }).map_err(|e: io::Error| error!("{}", e));
     tokio::spawn(f);
 
     let rx = rx
         .map_err(|_| Error::from(io::Error::new(ErrorKind::UnexpectedEof, "incomplete")).compat());
 
     (archive_size, Body::wrap_stream(rx))
-}
-
-fn send_archive<W>(
-    archiver: Archiver<W>,
-    path: PathBuf,
-    files: Vec<PathBuf>,
-) -> SendArchiveFuture<W>
-where
-    W: Write,
-{
-    SendArchiveFuture {
-        archiver,
-        path,
-        files,
-    }
-}
-
-struct SendArchiveFuture<W>
-where
-    W: Write,
-{
-    archiver: Archiver<W>,
-    path: PathBuf,
-    files: Vec<PathBuf>,
-}
-
-impl<W> Future for SendArchiveFuture<W>
-where
-    W: Write,
-{
-    type Item = ();
-    type Error = io::Error;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        fs_async::blocking(|| {
-            for file in &self.files {
-                self.archiver.add_to_archive(&self.path, file);
-            }
-            self.archiver.finish()
-        })
-    }
 }
 
 #[async]
@@ -482,21 +446,4 @@ fn get_dir_index(path: &Path) -> Result<String, Error> {
         render_time.as_millis()
     );
     Ok(rendered)
-}
-
-fn get_dir_index_async(path: PathBuf) -> GetDirIndexFuture {
-    GetDirIndexFuture { path }
-}
-
-struct GetDirIndexFuture {
-    path: PathBuf,
-}
-
-impl Future for GetDirIndexFuture {
-    type Item = String;
-    type Error = Error;
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        fs_async::blocking(|| get_dir_index(&self.path))
-    }
 }

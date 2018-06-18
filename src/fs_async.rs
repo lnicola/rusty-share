@@ -6,16 +6,19 @@ use std::result::Result;
 use tokio;
 use tokio_threadpool;
 
-pub struct BlockingFuture<F, T, E>(Option<F>)
+pub struct BlockingFuture<F, T, E>
 where
-    F: FnOnce() -> Result<T, E>;
+    F: FnOnce() -> Result<T, E>,
+{
+    f: Option<F>,
+}
 
 impl<F, T, E> BlockingFuture<F, T, E>
 where
     F: FnOnce() -> Result<T, E>,
 {
     pub fn new(f: F) -> Self {
-        BlockingFuture::<F, T, E>(Some(f))
+        Self { f: Some(f) }
     }
 }
 
@@ -27,16 +30,13 @@ where
     type Error = E;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let f = self.0.take().expect("future already completed");
+        let f = || (self.f.take().expect("future already completed"))();
 
         match tokio_threadpool::blocking(f) {
             Ok(Async::Ready(Ok(v))) => Ok(Async::Ready(v)),
             Ok(Async::Ready(Err(err))) => Err(err),
             Ok(Async::NotReady) => Ok(Async::NotReady),
-            _ => panic!(
-                "`blocking` annotated I/O must be called \
-                 from the context of the Tokio runtime."
-            ),
+            _ => panic!("`BlockingFuture` must be used from the context of the Tokio runtime."),
         }
     }
 }
@@ -54,7 +54,7 @@ impl Future for MetadataFuture {
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        blocking(|| fs::metadata(&self.path))
+        blocking_io(|| fs::metadata(&self.path))
     }
 }
 
@@ -92,16 +92,15 @@ impl FileExt for tokio::fs::File {
     }
 }
 
-pub fn blocking<F, T, E>(f: F) -> Poll<T, E>
+fn blocking_io<F, T>(f: F) -> Poll<T, io::Error>
 where
-    F: FnOnce() -> Result<T, E>,
-    E: From<io::Error>,
+    F: FnOnce() -> Result<T, io::Error>,
 {
     match tokio_threadpool::blocking(f) {
         Ok(Async::Ready(Ok(v))) => Ok(v.into()),
         Ok(Async::Ready(Err(err))) => Err(err),
         Ok(Async::NotReady) => Ok(Async::NotReady),
-        Err(_) => Err(blocking_err().into()),
+        Err(_) => Err(blocking_err()),
     }
 }
 
