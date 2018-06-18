@@ -54,7 +54,7 @@ impl Future for MetadataFuture {
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        blocking_io(|| fs::metadata(&self.path))
+        blocking(|| fs::metadata(&self.path))
     }
 }
 
@@ -92,15 +92,16 @@ impl FileExt for tokio::fs::File {
     }
 }
 
-pub fn blocking_io<F, T>(f: F) -> Poll<T, io::Error>
+pub fn blocking<F, T, E>(f: F) -> Poll<T, E>
 where
-    F: FnOnce() -> io::Result<T>,
+    F: FnOnce() -> Result<T, E>,
+    E: From<io::Error>,
 {
     match tokio_threadpool::blocking(f) {
         Ok(Async::Ready(Ok(v))) => Ok(v.into()),
         Ok(Async::Ready(Err(err))) => Err(err),
         Ok(Async::NotReady) => Ok(Async::NotReady),
-        Err(_) => Err(blocking_err()),
+        Err(_) => Err(blocking_err().into()),
     }
 }
 

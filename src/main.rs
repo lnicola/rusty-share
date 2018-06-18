@@ -30,8 +30,8 @@ extern crate url;
 extern crate walkdir;
 
 use failure::{Error, ResultExt};
-use fs_async::{blocking_io, FileExt};
-use futures::prelude::{async, await, Async, Poll};
+use fs_async::FileExt;
+use futures::prelude::{async, await, Poll};
 use futures::sync::mpsc;
 use futures::{future, Future, Stream};
 use http::header::CONTENT_TYPE;
@@ -317,7 +317,7 @@ where
     type Error = io::Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        blocking_io(|| {
+        fs_async::blocking(|| {
             for file in &self.files {
                 self.archiver.add_to_archive(&self.path, file);
             }
@@ -497,18 +497,6 @@ impl Future for GetDirIndexFuture {
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        blocking(|| get_dir_index(&self.path))
-    }
-}
-
-pub fn blocking<F, T>(f: F) -> Poll<T, Error>
-where
-    F: FnOnce() -> Result<T, Error>,
-{
-    match tokio_threadpool::blocking(f) {
-        Ok(Async::Ready(Ok(v))) => Ok(v.into()),
-        Ok(Async::Ready(Err(err))) => Err(err),
-        Ok(Async::NotReady) => Ok(Async::NotReady),
-        Err(_) => Err(fs_async::blocking_err().into()),
+        fs_async::blocking(|| get_dir_index(&self.path))
     }
 }
