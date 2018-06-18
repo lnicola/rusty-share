@@ -30,6 +30,7 @@ extern crate url;
 extern crate walkdir;
 
 use failure::{Error, ResultExt};
+use fs_async::FileExt;
 use futures::prelude::{async, await};
 use futures::sync::mpsc;
 use futures::{future, Future, Stream};
@@ -51,7 +52,7 @@ use std::cmp::Ordering;
 use std::convert::TryFrom;
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry, File};
-use std::io::{self, ErrorKind, Write};
+use std::io::{self, ErrorKind, SeekFrom, Write};
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -205,39 +206,6 @@ struct RustyShare {
     options: Options,
 }
 
-// pub struct SeekFuture {
-//     pos: SeekFrom,
-//     inner: Option<tokio::fs::File>,
-// }
-
-// impl Future for SeekFuture {
-//     type Item = (tokio::fs::File, u64);
-//     type Error = io::Error;
-
-//     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-//         let mut inner = self.inner.take().unwrap();
-
-//         match inner.poll_seek(self.pos) {
-//             Ok(Async::Ready(seek)) => Ok(Async::Ready((inner, seek))),
-//             Ok(_) => Ok(Async::NotReady),
-//             Err(e) => Err(e),
-//         }
-//     }
-// }
-
-// trait TokioFsFileExt: Sized {
-//     fn seek(self, pos: SeekFrom) -> SeekFuture;
-// }
-
-// impl TokioFsFileExt for tokio::fs::File {
-//     fn seek(self, pos: SeekFrom) -> SeekFuture {
-//         SeekFuture {
-//             pos,
-//             inner: Some(self),
-//         }
-//     }
-// }
-
 #[async]
 fn handle_get_dir(path: PathBuf, path_: PathBuf) -> Result<Response, Error> {
     if !path_.to_str().unwrap().ends_with('/') {
@@ -258,9 +226,9 @@ fn handle_get_dir(path: PathBuf, path_: PathBuf) -> Result<Response, Error> {
 fn handle_get_file(req: Request, path: PathBuf) -> Result<Response, Error> {
     let mut file = await!(tokio::fs::File::open(path.clone()))?;
     let mut buf = [0; 16];
-    let (_, buf) = await!(tokio::io::read_exact(file, buf))?;
-    let file = await!(fs_async::BlockingFuture::new(move || File::open(&path)))?;
-    // let (file, _) = await!(file.seek(SeekFrom::Start(0)))?;
+    let (file, buf) = await!(tokio::io::read_exact(file, buf))?;
+    let (file, _) = await!(file.seek(SeekFrom::Start(0)))?;
+    let file = file.into_std();
 
     let mut headers = HeaderMap::new();
     if let Some(mime) = buf.sniff_mime_type() {
@@ -312,9 +280,7 @@ fn get_archive(path: PathBuf, files: Vec<PathBuf>) -> (u64, Body) {
         for file in &files {
             archiver.add_to_archive(&path, file);
         }
-        archiver.finish()?;
-
-        Ok(())
+        archiver.finish()
     }).map_err(|e: io::Error| error!("{}", e));
     tokio::spawn(f);
 
