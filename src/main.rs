@@ -2,8 +2,6 @@
 #![feature(generators)]
 #![feature(duration_as_u128)]
 #![feature(try_from)]
-#![feature(allocator_api)]
-#![feature(global_allocator)]
 
 extern crate bytes;
 extern crate bytesize;
