@@ -49,16 +49,16 @@ use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::convert::TryFrom;
 use std::ffi::OsStr;
-use std::fs::{self, DirEntry, File};
-use std::io::{self, ErrorKind, SeekFrom, Write};
+use std::fs::{self, DirEntry};
+use std::io::{self, ErrorKind, SeekFrom};
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use structopt::StructOpt;
 use tar::Builder;
 use url::{form_urlencoded, percent_encoding};
-use walkdir::WalkDir;
 
+mod archive;
 mod fs_async;
 mod index_page;
 mod options;
@@ -73,35 +73,6 @@ static A: System = System;
 
 type Request = http::Request<Body>;
 type Response = http::Response<Body>;
-
-fn entry_size(root: &Path, entry: &walkdir::DirEntry) -> Result<u64, Error> {
-    let metadata = entry
-        .metadata()
-        .with_context(|_| format!("Unable to read metadata for {}", entry.path().display()))?;
-    let relative_path = entry.path().strip_prefix(&root).with_context(|_| {
-        format!(
-            "Unable to make path {} relative from {}",
-            entry.path().display(),
-            root.display()
-        )
-    })?;
-    let mut header_len = 512;
-    let path_len = relative_path.len() as u64;
-    if path_len > 100 {
-        header_len += 512 + path_len;
-        if path_len % 512 > 0 {
-            header_len += 512 - path_len % 512;
-        }
-    }
-    if !metadata.is_dir() {
-        let mut len = metadata.len();
-        if len % 512 > 0 {
-            len += 512 - len % 512;
-        }
-        header_len += len;
-    }
-    Ok(header_len)
-}
 
 #[derive(Clone)]
 struct RustyShare {
@@ -170,77 +141,13 @@ fn decode_request(form: &[u8]) -> Option<Vec<PathBuf>> {
     Some(files)
 }
 
-fn write_entry<W>(
-    builder: &mut Builder<W>,
-    root: &Path,
-    entry: &walkdir::DirEntry,
-) -> Result<(), Error>
-where
-    W: Write,
-{
-    let metadata = entry
-        .metadata()
-        .with_context(|_| format!("Unable to read metadata for {}", entry.path().display()))?;
-    let relative_path = entry.path().strip_prefix(&root).with_context(|_| {
-        format!(
-            "Unable to make path {} relative from {}",
-            entry.path().display(),
-            root.display()
-        )
-    })?;
-    if metadata.is_dir() {
-        builder
-            .append_dir(&relative_path, entry.path())
-            .with_context(|_| format!("Unable to add {} to archive", entry.path().display()))?;
-    } else {
-        let mut file = File::open(&entry.path())
-            .with_context(|_| format!("Unable to open {}", entry.path().display()))?;
-        builder
-            .append_file(&relative_path, &mut file)
-            .with_context(|_| format!("Unable to add {} to archive", entry.path().display()))?;
-    }
-
-    Ok(())
-}
-
-fn add_to_archive<W>(builder: &mut Builder<W>, root: &Path, entry: &Path)
-where
-    W: Write,
-{
-    let entries = WalkDir::new(root.join(&entry))
-        .into_iter()
-        .filter_entry(|e| !is_hidden(e.file_name()));
-    for e in entries {
-        match e {
-            Ok(e) => if let Err(e) = write_entry(builder, root.as_ref(), &e) {
-                error!("{}", e);
-            },
-            Err(e) => error!("{}", e),
-        }
-    }
-}
-
-fn get_archive_size(path: &Path, files: &[PathBuf]) -> Result<u64, Error> {
-    let mut archive_size = 1024;
-    for file in files {
-        let entries = WalkDir::new(path.join(&file))
-            .into_iter()
-            .filter_entry(|e| !is_hidden(e.file_name()));
-        for e in entries {
-            let e = e?;
-            archive_size += entry_size(path, &e)?;
-        }
-    }
-    Ok(archive_size)
-}
-
 fn get_archive(path: PathBuf, files: Vec<PathBuf>) -> Body {
     let (tx, rx) = mpsc::channel(0);
     let pipe = Pipe::new(tx);
     let mut builder = Builder::new(pipe);
     let f = BlockingFuture::new(move || {
         for file in &files {
-            add_to_archive(&mut builder, &path, file);
+            archive::add_to_archive(&mut builder, &path, file);
         }
         builder.finish()
     }).map_err(|e: io::Error| error!("{}", e));
@@ -270,7 +177,7 @@ fn handle_post(req: Request, path: PathBuf, path_: PathBuf) -> Result<Response, 
         }
 
         let archive_name = get_archive_name(&path_, &files);
-        let archive_size = match get_archive_size(&path, &files) {
+        let archive_size = match archive::get_archive_size(&path, &files) {
             Ok(size) => Some(size),
             Err(e) => {
                 error!("{}", e);
@@ -398,7 +305,7 @@ fn get_dir_entries(path: &Path) -> Result<Vec<ShareEntry>, Error> {
     Ok(entries)
 }
 
-fn is_hidden(path: &OsStr) -> bool {
+pub fn is_hidden(path: &OsStr) -> bool {
     path.as_bytes().starts_with(b".")
 }
 
