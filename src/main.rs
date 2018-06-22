@@ -84,7 +84,7 @@ fn handle_get_dir(path: PathBuf, path_: PathBuf) -> Result<Response, Error> {
     if !path_.to_str().unwrap().ends_with('/') {
         Ok(response::found(&(path_.to_str().unwrap().to_owned() + "/")))
     } else {
-        let rendered = await!(BlockingFuture::new(move || get_dir_index(&path)));
+        let rendered = await!(BlockingFuture::new(move || render_index(&path)));
         match rendered {
             Ok(rendered) => Ok(response::page(rendered)),
             Err(e) => {
@@ -126,14 +126,15 @@ fn handle_get(req: Request, path: PathBuf, path_: PathBuf) -> Result<Response, E
     }
 }
 
+fn decode_path(p: &str) -> PathBuf {
+    OsStr::from_bytes(Cow::from(percent_encoding::percent_decode(p.as_bytes())).as_ref()).into()
+}
+
 fn decode_request(form: &[u8]) -> Option<Vec<PathBuf>> {
     let mut files = Vec::new();
     for (name, value) in form_urlencoded::parse(&form) {
         if name == "s" {
-            let value: PathBuf = OsStr::from_bytes(
-                Cow::<[u8]>::from(percent_encoding::percent_decode(value.as_bytes())).as_ref(),
-            ).into();
-            files.push(value)
+            files.push(decode_path(&value))
         } else {
             return None;
         }
@@ -217,11 +218,7 @@ fn get_archive_name(path_: &Path, files: &[PathBuf]) -> String {
 impl RustyShare {
     fn call(&self, req: Request) -> Box<Future<Item = Response, Error = Error> + Send + 'static> {
         let root = self.options.root.as_path();
-        let path_ = PathBuf::from(OsStr::from_bytes(
-            Cow::from(percent_encoding::percent_decode(
-                req.uri().path().as_bytes(),
-            )).as_ref(),
-        ));
+        let path_ = decode_path(req.uri().path());
         let path = root.join(Path::new(&path_).strip_prefix("/").unwrap());
         info!("{} {}", req.method(), req.uri().path());
         match *req.method() {
@@ -309,7 +306,7 @@ pub fn is_hidden(path: &OsStr) -> bool {
     path.as_bytes().starts_with(b".")
 }
 
-fn get_dir_index(path: &Path) -> Result<String, Error> {
+fn render_index(path: &Path) -> Result<String, Error> {
     let enumerate_start = Instant::now();
     let entries = get_dir_entries(&path)?;
     let render_start = Instant::now();
