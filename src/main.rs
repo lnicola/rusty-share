@@ -46,7 +46,6 @@ use rayon::slice::ParallelSliceMut;
 use share_entry::ShareEntry;
 use std::alloc::System;
 use std::borrow::Cow;
-use std::cmp::Ordering;
 use std::convert::TryFrom;
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry};
@@ -247,7 +246,7 @@ fn run() -> Result<(), Error> {
         service::service_fn(move |req| rusty_share.call(req).map_err(|e| e.compat()))
     });
 
-    info!("Listening on http://{}", server.local_addr());
+    println!("Listening on http://{}", server.local_addr());
 
     tokio::run(server.map_err(|e| eprintln!("server error: {}", e)));
     Ok(())
@@ -290,15 +289,7 @@ fn get_dir_entries(path: &Path) -> Result<Vec<ShareEntry>, Error> {
         })
         .collect::<Vec<_>>();
 
-    entries.par_sort_unstable_by(|e1, e2| {
-        if e1.is_dir && !e2.is_dir {
-            Ordering::Less
-        } else if !e1.is_dir && e2.is_dir {
-            Ordering::Greater
-        } else {
-            e2.date.cmp(&e1.date)
-        }
-    });
+    entries.par_sort_unstable_by(|e1, e2| (e2.is_dir(), e2.date()).cmp(&(e1.is_dir(), e1.date())));
 
     Ok(entries)
 }
@@ -312,7 +303,7 @@ fn render_index(path: &Path) -> Result<String, Error> {
     let entries = get_dir_entries(&path)?;
     let render_start = Instant::now();
     let enumerate_time = render_start - enumerate_start;
-    let rendered = index_page::render(entries).unwrap();
+    let rendered = index_page::render(&entries).unwrap();
     let render_time = Instant::now() - render_start;
     info!(
         "enumerate: {} ms, render: {} ms",
