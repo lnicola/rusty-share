@@ -1,4 +1,4 @@
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{Bytes, BytesMut};
 use futures::sink::{Sink, Wait};
 use futures::sync::mpsc::Sender;
 use std::io::{Error, ErrorKind, Result, Write};
@@ -25,8 +25,7 @@ impl Drop for Pipe {
 
 impl Write for Pipe {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
-        self.bytes.reserve(buf.len());
-        self.bytes.put(buf);
+        self.bytes.extend_from_slice(buf);
         match self.dest.send(self.bytes.take().into()) {
             Ok(_) => Ok(buf.len()),
             Err(e) => Err(Error::new(ErrorKind::UnexpectedEof, e)),
