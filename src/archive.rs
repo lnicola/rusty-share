@@ -1,5 +1,6 @@
 use super::is_hidden;
 use failure::{Error, ResultExt};
+use log::{error, log};
 use path_ext::PathExt;
 use std::fs::File;
 use std::io::Write;

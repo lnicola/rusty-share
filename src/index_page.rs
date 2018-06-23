@@ -3,6 +3,7 @@ use chrono_humanize::HumanTime;
 use failure::{Error, ResultExt};
 use horrorshow::helper::doctype;
 use horrorshow::prelude::*;
+use horrorshow::{append_html, html};
 #[cfg(not(target_os = "windows"))]
 use std::os::unix::ffi::OsStrExt;
 use url::percent_encoding;

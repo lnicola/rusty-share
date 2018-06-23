@@ -1,3 +1,4 @@
+#![feature(rust_2018_idioms)]
 #![feature(proc_macro)]
 #![feature(generators)]
 #![feature(duration_as_u128)]
@@ -9,17 +10,14 @@ extern crate chrono;
 extern crate chrono_humanize;
 extern crate failure;
 extern crate futures_await as futures;
-#[macro_use]
 extern crate horrorshow;
 extern crate http;
 extern crate http_serve;
 extern crate hyper;
-#[macro_use]
 extern crate log;
 extern crate mime_sniffer;
 extern crate pretty_env_logger;
 extern crate rayon;
-#[macro_use]
 extern crate structopt;
 extern crate tar;
 extern crate tokio;
@@ -37,6 +35,7 @@ use http::header::CONTENT_TYPE;
 use http::{HeaderMap, Method};
 use http_serve::ChunkedReadFile;
 use hyper::{service, Body, Server};
+use log::{error, info, log};
 use mime_sniffer::MimeTypeSniffer;
 use options::Options;
 use os_str_ext::OsStrExt3;
