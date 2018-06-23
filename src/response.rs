@@ -1,8 +1,6 @@
-use bytes::BytesMut;
 use http::header::{HeaderValue, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE, LOCATION};
 use http::{Response, StatusCode};
 use hyper::Body;
-use std::fmt::Write;
 
 pub fn page(html: String) -> Response<Body> {
     Response::builder()
@@ -17,7 +15,7 @@ pub fn archive(content_length: Option<u64>, body: Body, file_name: &str) -> Resp
         HeaderValue::from_str(&format!("attachment; filename*=UTF-8''{}", file_name)).unwrap();
     let mut builder = Response::builder();
     if let Some(content_length) = content_length {
-        builder.header(CONTENT_LENGTH, content_length_value(content_length));
+        builder.header(CONTENT_LENGTH, HeaderValue::from(content_length));
     }
     builder
         .header(CONTENT_DISPOSITION, content_disposition)
@@ -53,14 +51,4 @@ pub fn method_not_allowed() -> Response<Body> {
         .status(StatusCode::METHOD_NOT_ALLOWED)
         .body(Body::empty())
         .unwrap()
-}
-
-fn content_length_value(content_length: u64) -> HeaderValue {
-    const MAX_DECIMAL_U64_BYTES: usize = 20;
-
-    let mut len_buf = BytesMut::with_capacity(MAX_DECIMAL_U64_BYTES);
-    write!(len_buf, "{}", content_length).expect("BytesMut can hold a decimal u64");
-
-    // safe because u64 Display is ascii numerals
-    unsafe { HeaderValue::from_shared_unchecked(len_buf.freeze()) }
 }
