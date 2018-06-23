@@ -27,8 +27,9 @@ extern crate tokio_threadpool;
 extern crate url;
 extern crate walkdir;
 
+use blocking_future::BlockingFuture;
 use failure::{Error, ResultExt};
-use fs_async::{BlockingFuture, FileExt};
+use fs_async::FileExt;
 use futures::prelude::{async, await};
 use futures::sync::mpsc;
 use futures::{future, Future, Stream};
@@ -59,6 +60,7 @@ use tar::Builder;
 use url::{form_urlencoded, percent_encoding};
 
 mod archive;
+mod blocking_future;
 mod fs_async;
 mod index_page;
 mod options;
