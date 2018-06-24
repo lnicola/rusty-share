@@ -10,16 +10,13 @@ pub fn page(html: String) -> Response<Body> {
         .unwrap()
 }
 
-pub fn archive(content_length: Option<u64>, body: Body, file_name: &str) -> Response<Body> {
+pub fn archive(content_length: u64, body: Body, file_name: &str) -> Response<Body> {
     let content_disposition =
         HeaderValue::from_str(&format!("attachment; filename*=UTF-8''{}", file_name)).unwrap();
-    let mut builder = Response::builder();
-    if let Some(content_length) = content_length {
-        builder.header(CONTENT_LENGTH, HeaderValue::from(content_length));
-    }
-    builder
+    Response::builder()
         .header(CONTENT_DISPOSITION, content_disposition)
         .header(CONTENT_TYPE, "application/x-tar")
+        .header(CONTENT_LENGTH, HeaderValue::from(content_length))
         .body(body)
         .unwrap()
 }

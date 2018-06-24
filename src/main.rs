@@ -39,7 +39,6 @@ use log::{error, info, log};
 use mime_sniffer::MimeTypeSniffer;
 use options::Options;
 use os_str_ext::OsStrExt3;
-use path_ext::PathExt;
 use pipe::Pipe;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
@@ -56,6 +55,7 @@ use std::time::Instant;
 use structopt::StructOpt;
 use tar::Builder;
 use url::{form_urlencoded, percent_encoding};
+use walkdir::WalkDir;
 
 mod archive;
 mod blocking_future;
@@ -63,7 +63,6 @@ mod fs_async;
 mod index_page;
 mod options;
 mod os_str_ext;
-mod path_ext;
 mod pipe;
 mod response;
 mod share_entry;
@@ -142,16 +141,20 @@ fn decode_request(form: &[u8]) -> Option<Vec<PathBuf>> {
     Some(files)
 }
 
-fn get_archive(path: PathBuf, files: Vec<PathBuf>) -> Body {
+use archive::Archive;
+
+fn get_archive(archive: Archive) -> Body {
     let (tx, rx) = mpsc::channel(0);
     let pipe = Pipe::new(tx);
     let mut builder = Builder::new(pipe);
     let f = BlockingFuture::new(move || {
-        for file in &files {
-            archive::add_to_archive(&mut builder, &path, file);
+        for entry in archive.entries() {
+            if let Err(e) = entry.write_to(&mut builder) {
+                error!("{}", e);
+            }
         }
         builder.finish()
-    }).map_err(|e: io::Error| error!("{}", e));
+    }).map_err(|e| error!("{}", e));
     tokio::spawn(f);
 
     let rx = rx
@@ -171,22 +174,27 @@ fn handle_post(req: Request, path: PathBuf, path_: PathBuf) -> Result<Response, 
                 let file_name = path.file_name().unwrap();
                 files.push(file_name.into());
             }
-        } else {
-            for file in &files {
-                info!("{}", file.display());
+        }
+
+        let mut archive = Archive::new();
+        for file in &files {
+            info!("{}", file.display());
+            let entries = WalkDir::new(path.join(file))
+                .into_iter()
+                .filter_entry(|e| !is_hidden(e.file_name()));
+            for entry in entries {
+                if let Err(e) = entry
+                    .map_err(|e| e.into())
+                    .and_then(|entry| archive.add_entry(&path, &entry))
+                {
+                    error!("{}", e);
+                }
             }
         }
 
         let archive_name = get_archive_name(&path_, &files);
-        let archive_size = match archive::get_archive_size(&path, &files) {
-            Ok(size) => Some(size),
-            Err(e) => {
-                error!("{}", e);
-                None
-            }
-        };
-
-        let body = get_archive(path, files);
+        let archive_size = archive.size();
+        let body = get_archive(archive);
         response::archive(archive_size, body, &archive_name)
     } else {
         response::bad_request()
@@ -196,23 +204,11 @@ fn handle_post(req: Request, path: PathBuf, path_: PathBuf) -> Result<Response, 
 }
 
 fn get_archive_name(path_: &Path, files: &[PathBuf]) -> String {
-    if files.len() == 1 {
-        files[0]
-            .with_extension("tar")
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .into_owned()
-    } else if path_.is_root() {
-        String::from("archive.tar")
-    } else {
-        path_
-            .with_extension("tar")
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .into_owned()
-    }
+    let file = if files.len() == 1 { &files[0] } else { path_ };
+    file.with_extension("tar")
+        .file_name()
+        .map(|f| f.to_string_lossy().into_owned())
+        .unwrap_or_else(|| String::from("archive.tar"))
 }
 
 impl RustyShare {
