@@ -3,21 +3,32 @@
 #![feature(generators)]
 #![feature(duration_as_u128)]
 #![feature(try_from)]
+#![allow(dead_code)]
 
 extern crate bytes;
 extern crate bytesize;
 extern crate chrono;
 extern crate chrono_humanize;
+extern crate cookie;
+#[macro_use]
+extern crate diesel;
 extern crate failure;
 extern crate futures_await as futures;
 extern crate horrorshow;
 extern crate http;
 extern crate http_serve;
 extern crate hyper;
+extern crate libpasta;
 extern crate log;
 extern crate mime_sniffer;
 extern crate pretty_env_logger;
+extern crate rand;
 extern crate rayon;
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
+extern crate hex;
+extern crate serde_urlencoded;
 extern crate structopt;
 extern crate tar;
 extern crate tokio;
@@ -26,20 +37,25 @@ extern crate url;
 extern crate walkdir;
 
 use blocking_future::BlockingFuture;
+use cookie::Cookie;
+use db::Store;
+use diesel::QueryResult;
 use failure::{Error, ResultExt};
 use fs_async::FileExt;
 use futures::prelude::{async, await};
 use futures::sync::mpsc;
 use futures::{future, Future, Stream};
-use http::header::CONTENT_TYPE;
+use http::header::{CONTENT_TYPE, COOKIE};
 use http::{HeaderMap, Method};
 use http_serve::ChunkedReadFile;
 use hyper::{service, Body, Server};
+use libpasta::HashUpdate;
 use log::{error, info, log};
 use mime_sniffer::MimeTypeSniffer;
 use options::Options;
 use os_str_ext::OsStrExt3;
 use pipe::Pipe;
+use rand::Rng;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
 use share_entry::ShareEntry;
@@ -59,6 +75,7 @@ use walkdir::WalkDir;
 
 mod archive;
 mod blocking_future;
+mod db;
 mod fs_async;
 mod options;
 mod os_str_ext;
@@ -203,6 +220,21 @@ fn handle_post(req: Request, path: PathBuf, path_: PathBuf) -> Result<Response, 
     Ok(response)
 }
 
+#[async]
+fn handle_login(req: Request) -> Result<Response, Error> {
+    let b = await!(req.into_body().concat2())?;
+    let form = serde_urlencoded::from_bytes::<LoginForm>(&b).unwrap();
+    let store = Store::new(db::establish_connection().unwrap());
+    let session = authenticate(&store, &form.user, &form.pass).unwrap();
+    let response = if let Some(session_id) = session {
+        response::login_ok(hex::encode(&session_id))
+    } else {
+        response::login_failed()
+    };
+
+    Ok(response)
+}
+
 fn get_archive_name(path_: &Path, files: &[PathBuf]) -> String {
     let file = if files.len() == 1 { &files[0] } else { path_ };
     file.with_extension("tar")
@@ -211,8 +243,37 @@ fn get_archive_name(path_: &Path, files: &[PathBuf]) -> String {
         .unwrap_or_else(|| String::from("archive.tar"))
 }
 
+#[derive(Deserialize, Debug)]
+struct LoginForm {
+    user: String,
+    pass: String,
+}
+
 impl RustyShare {
     fn call(&self, req: Request) -> Box<Future<Item = Response, Error = Error> + Send + 'static> {
+        if req.uri().path() == "/login" {
+            match *req.method() {
+                Method::GET => {
+                    return Box::new(future::ok(response::static_page(include_str!(
+                        "../assets/login.html"
+                    ))))
+                }
+                Method::POST => return Box::new(handle_login(req)),
+                _ => return Box::new(future::ok(response::method_not_allowed())),
+            }
+        }
+
+        if let Some(cookie) = req.headers().get(COOKIE) {
+            let session_id = Cookie::parse(cookie.to_str().unwrap()).unwrap();
+            let store = Store::new(db::establish_connection().unwrap());
+            let ok = login(&store, &hex::decode(session_id.value()).unwrap()).unwrap();
+            if !ok {
+                return Box::new(future::ok(response::login_redirect()));
+            }
+        } else {
+            return Box::new(future::ok(response::login_redirect()));
+        }
+
         let root = self.options.root.as_path();
         let path_ = decode_path(req.uri().path());
         let path = root.join(Path::new(&path_).strip_prefix("/").unwrap());
@@ -227,6 +288,16 @@ impl RustyShare {
 
 fn run() -> Result<(), Error> {
     let options = Options::from_args();
+
+    if let Some(ref db) = options.db {
+        if !Path::new(&db).exists() {
+            let store = Store::new(db::establish_connection().unwrap());
+            store
+                .initialize_database()
+                .expect("unable to create database");
+            register_user(&store, "grayshade", "hunter2").unwrap();
+        }
+    }
 
     let addr = SocketAddr::new(
         options
@@ -307,4 +378,39 @@ fn render_index(path: &Path) -> Result<String, Error> {
         render_time.as_millis()
     );
     Ok(rendered)
+}
+
+pub fn register_user(store: &Store, name: &str, password: &str) -> QueryResult<i32> {
+    store.insert_user(&name, &libpasta::hash_password(&password))
+}
+
+pub fn authenticate(store: &Store, name: &str, password: &str) -> QueryResult<Option<[u8; 16]>> {
+    let user = store
+        .find_user(name)?
+        .and_then(
+            |user| match libpasta::verify_password_update_hash(&user.password, &password) {
+                HashUpdate::Verified(Some(new_hash)) => {
+                    if let Err(e) = store.update_password(user.id, &new_hash) {
+                        error!("Error migrating password for user id {}: {}", user.id, e);
+                    }
+                    Some(user)
+                }
+                HashUpdate::Verified(None) => Some(user),
+                HashUpdate::Failed => None,
+            },
+        )
+        .map(|user| {
+            let session_id = rand::thread_rng().gen::<[u8; 16]>();
+            if let Err(e) = store.create_session(&session_id, user.id) {
+                error!("Error saving session for user id {}: {}", user.id, e);
+            }
+
+            session_id
+        });
+
+    Ok(user)
+}
+
+pub fn login(store: &Store, session_id: &[u8]) -> QueryResult<bool> {
+    Ok(store.lookup_session(session_id)?.is_some())
 }

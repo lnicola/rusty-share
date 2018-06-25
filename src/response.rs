@@ -1,4 +1,7 @@
-use http::header::{HeaderValue, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE, LOCATION};
+use cookie::Cookie;
+use http::header::{
+    HeaderValue, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE, LOCATION, SET_COOKIE,
+};
 use http::{Response, StatusCode};
 use hyper::Body;
 
@@ -7,6 +10,51 @@ pub fn page(html: String) -> Response<Body> {
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, "text/html; charset=utf-8")
         .body(Body::from(html))
+        .unwrap()
+}
+
+pub fn static_page(html: &'static str) -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "text/html; charset=utf-8")
+        .body(Body::from(html))
+        .unwrap()
+}
+
+pub fn login_ok(session_id: String) -> Response<Body> {
+    let cookie = Cookie::new("sid", session_id);
+    Response::builder()
+        .status(StatusCode::FOUND)
+        .header(
+            SET_COOKIE,
+            HeaderValue::from_str(&cookie.to_string()).unwrap(),
+        )
+        .header(LOCATION, HeaderValue::from_static("/"))
+        .body(Body::empty())
+        .unwrap()
+}
+
+pub fn login_failed() -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .header(CONTENT_TYPE, "text/html; charset=utf-8")
+        .header(
+            SET_COOKIE,
+            HeaderValue::from_str(&Cookie::named("sid").to_string()).unwrap(),
+        )
+        .body(Body::from(include_str!("../assets/login_failed.html")))
+        .unwrap()
+}
+
+pub fn login_redirect() -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::FOUND)
+        .header(
+            SET_COOKIE,
+            HeaderValue::from_str(&Cookie::named("sid").to_string()).unwrap(),
+        )
+        .header(LOCATION, HeaderValue::from_static("/login"))
+        .body(Body::empty())
         .unwrap()
 }
 

@@ -7,6 +7,8 @@ pub struct Options {
         short = "r", long = "root", help = "Root path", default_value = ".", parse(from_os_str)
     )]
     pub root: PathBuf,
+    #[structopt(long = "db", help = "Database path", parse(from_os_str))]
+    pub db: Option<PathBuf>,
     #[structopt(
         short = "l", long = "listen", help = "Address to listen on", default_value = "127.0.0.1"
     )]
