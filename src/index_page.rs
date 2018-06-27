@@ -28,15 +28,11 @@ pub fn render(entries: &[ShareEntry]) -> Result<String, Error> {
                         }
                         tr { td { } td { a(href=Raw("..")) { : Raw("..") } } td { } td { } }
                         @ for entry in entries {
-                            |tmpl| {
-                                tmpl << html! {
-                                    tr {
-                                        td { input(name="s", value=Raw(&entry.link()), type="checkbox") }
-                                        td { a(href=Raw(entry.link())) { : entry.name() } }
-                                        td { : Raw(entry.size()) }
-                                        td { : Raw(entry.date_string()) }
-                                    }
-                                }
+                            tr {
+                                td { input(name="s", value=entry.link(), type="checkbox") }
+                                td { a(href=entry.link()) { : entry.name() } }
+                                td { : Raw(entry.size()) }
+                                td { : Raw(entry.date_string()) }
                             }
                         }
                     }

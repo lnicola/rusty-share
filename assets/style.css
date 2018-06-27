@@ -11,10 +11,11 @@ body {
 
 table {
     border-collapse: collapse;
+    table-layout: fixed;
 }
 
 col.selected {
-    width: 20px;
+    width: 39px;
 }
 
 col.size {
@@ -45,8 +46,11 @@ th {
 
 th,
 td {
+    overflow: hidden;
     padding: 8px;
     text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 th:nth-child(3),
