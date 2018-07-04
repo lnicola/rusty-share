@@ -60,9 +60,9 @@ use walkdir::WalkDir;
 mod archive;
 mod blocking_future;
 mod fs_async;
-mod index_page;
 mod options;
 mod os_str_ext;
+mod page;
 mod pipe;
 mod response;
 mod share_entry;
@@ -299,7 +299,7 @@ fn render_index(path: &Path) -> Result<String, Error> {
     let entries = get_dir_entries(&path)?;
     let render_start = Instant::now();
     let enumerate_time = render_start - enumerate_start;
-    let rendered = index_page::render(&entries).unwrap();
+    let rendered = page::index(&entries)?;
     let render_time = Instant::now() - render_start;
     info!(
         "enumerate: {} ms, render: {} ms",

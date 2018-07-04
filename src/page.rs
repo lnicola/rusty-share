@@ -4,7 +4,7 @@ use horrorshow::prelude::*;
 use horrorshow::{append_html, html};
 use ShareEntry;
 
-pub fn render(entries: &[ShareEntry]) -> Result<String, Error> {
+pub fn index(entries: &[ShareEntry]) -> Result<String, Error> {
     let page = html! {
         : doctype::HTML;
         html {
