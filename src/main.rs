@@ -100,14 +100,10 @@ fn handle_get_dir(path: PathBuf, path_: PathBuf) -> Result<Response, Error> {
     if !path_.to_str().unwrap().ends_with('/') {
         Ok(response::found(&(path_.to_str().unwrap().to_owned() + "/")))
     } else {
-        let rendered = await!(BlockingFuture::new(move || render_index(&path)));
-        match rendered {
-            Ok(rendered) => Ok(response::page(rendered)),
-            Err(e) => {
-                error!("{}", e);
-                Ok(response::not_found())
-            }
-        }
+        let rendered = await!(BlockingFuture::new(move || Ok::<_, ()>(render_index(
+            &path
+        )))).unwrap();
+        Ok(rendered)
     }
 }
 
@@ -229,7 +225,7 @@ fn handle_login(req: Request) -> Result<Response, Error> {
     let response = if let Some(session_id) = session {
         response::login_ok(hex::encode(&session_id))
     } else {
-        response::login_failed()
+        page::login(Some("Login failed"))
     };
 
     Ok(response)
@@ -253,11 +249,7 @@ impl RustyShare {
     fn call(&self, req: Request) -> Box<Future<Item = Response, Error = Error> + Send + 'static> {
         if req.uri().path() == "/login" {
             match *req.method() {
-                Method::GET => {
-                    return Box::new(future::ok(response::static_page(include_str!(
-                        "../assets/login.html"
-                    ))))
-                }
+                Method::GET => return Box::new(future::ok(page::login(None))),
                 Method::POST => return Box::new(handle_login(req)),
                 _ => return Box::new(future::ok(response::method_not_allowed())),
             }
@@ -365,19 +357,26 @@ pub fn is_hidden(path: &OsStr) -> bool {
     path.as_bytes().starts_with(b".")
 }
 
-fn render_index(path: &Path) -> Result<String, Error> {
+fn render_index(path: &Path) -> Response {
     let enumerate_start = Instant::now();
-    let entries = get_dir_entries(&path)?;
-    let render_start = Instant::now();
-    let enumerate_time = render_start - enumerate_start;
-    let rendered = page::index(&entries)?;
-    let render_time = Instant::now() - render_start;
-    info!(
-        "enumerate: {} ms, render: {} ms",
-        enumerate_time.as_millis(),
-        render_time.as_millis()
-    );
-    Ok(rendered)
+    match get_dir_entries(&path) {
+        Ok(entries) => {
+            let render_start = Instant::now();
+            let enumerate_time = render_start - enumerate_start;
+            let rendered = page::index(&entries);
+            let render_time = Instant::now() - render_start;
+            info!(
+                "enumerate: {} ms, render: {} ms",
+                enumerate_time.as_millis(),
+                render_time.as_millis()
+            );
+            rendered
+        }
+        Err(e) => {
+            error!("{}", e);
+            response::internal_server_error()
+        }
+    }
 }
 
 pub fn register_user(store: &Store, name: &str, password: &str) -> QueryResult<i32> {

@@ -34,18 +34,6 @@ pub fn login_ok(session_id: String) -> Response<Body> {
         .unwrap()
 }
 
-pub fn login_failed() -> Response<Body> {
-    Response::builder()
-        .status(StatusCode::UNAUTHORIZED)
-        .header(CONTENT_TYPE, "text/html; charset=utf-8")
-        .header(
-            SET_COOKIE,
-            HeaderValue::from_str(&Cookie::named("sid").to_string()).unwrap(),
-        )
-        .body(Body::from(include_str!("../assets/login_failed.html")))
-        .unwrap()
-}
-
 pub fn login_redirect() -> Response<Body> {
     Response::builder()
         .status(StatusCode::FOUND)
@@ -94,6 +82,13 @@ pub fn not_found() -> Response<Body> {
 pub fn method_not_allowed() -> Response<Body> {
     Response::builder()
         .status(StatusCode::METHOD_NOT_ALLOWED)
+        .body(Body::empty())
+        .unwrap()
+}
+
+pub fn internal_server_error() -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::INTERNAL_SERVER_ERROR)
         .body(Body::empty())
         .unwrap()
 }
