@@ -219,8 +219,10 @@ fn handle_login(req: Request, store: Store) -> Result<Response, Error> {
     let form = serde_urlencoded::from_bytes::<LoginForm>(&b).unwrap();
     let session = authenticate(&store, &form.user, &form.pass).unwrap();
     let response = if let Some(session_id) = session {
+        info!("Authenticating {}: success", form.user);
         response::login_ok(hex::encode(&session_id))
     } else {
+        info!("Authenticating {}: failed", form.user);
         page::login(Some("Login failed"))
     };
 
@@ -293,8 +295,9 @@ fn run() -> Result<(), Error> {
     let options = Options::from_args();
 
     if let Some(ref db) = options.db {
+        let should_initialize = !Path::new(&db).exists();
         let store = Store::new(db::establish_connection(db).unwrap());
-        if !Path::new(&db).exists() {
+        if should_initialize {
             store
                 .initialize_database()
                 .expect("unable to create database");
