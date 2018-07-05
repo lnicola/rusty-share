@@ -36,7 +36,7 @@ extern crate tokio_threadpool;
 extern crate url;
 extern crate walkdir;
 
-use blocking_future::BlockingFuture;
+use blocking_future::{BlockingFuture, BlockingFutureTry};
 use cookie::Cookie;
 use db::Store;
 use diesel::QueryResult;
@@ -100,9 +100,7 @@ fn handle_get_dir(path: PathBuf, path_: PathBuf) -> Result<Response, Error> {
     if !path_.to_str().unwrap().ends_with('/') {
         Ok(response::found(&(path_.to_str().unwrap().to_owned() + "/")))
     } else {
-        let rendered = await!(BlockingFuture::new(move || Ok::<_, ()>(render_index(
-            &path
-        )))).unwrap();
+        let rendered = await!(BlockingFuture::new(move || render_index(&path))).unwrap();
         Ok(rendered)
     }
 }
@@ -160,7 +158,7 @@ fn get_archive(archive: Archive) -> Body {
     let (tx, rx) = mpsc::channel(0);
     let pipe = Pipe::new(tx);
     let mut builder = Builder::new(pipe);
-    let f = BlockingFuture::new(move || {
+    let f = BlockingFutureTry::new(move || {
         for entry in archive.entries() {
             if let Err(e) = entry.write_to(&mut builder) {
                 error!("{}", e);
