@@ -223,7 +223,9 @@ fn handle_login(req: Request, store: Store) -> Result<Response, Error> {
         response::login_ok(hex::encode(&session_id))
     } else {
         info!("Authenticating {}: failed", form.user);
-        page::login(Some("Login failed"))
+        page::login(Some(
+            "Login failed. Please contact the site owner to reset your password.",
+        ))
     };
 
     Ok(response)
