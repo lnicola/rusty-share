@@ -245,23 +245,24 @@ struct LoginForm {
 
 impl RustyShare {
     fn call(&self, req: Request) -> Box<Future<Item = Response, Error = Error> + Send + 'static> {
-        info!("{} {}", req.method(), req.uri().path());
-
         if let Some(ref db) = self.options.db {
             let is_login = req.uri().path() == "/login";
             if is_login && *req.method() == Method::GET {
+                info!("{} {}", req.method(), req.uri().path());
                 return Box::new(future::ok(page::login(None)));
             }
 
             let store = match db::establish_connection(&db) {
                 Ok(conn) => Store::new(conn),
                 Err(e) => {
+                    info!("{} {}", req.method(), req.uri().path());
                     error!("{}", e);
                     return Box::new(future::ok(response::internal_server_error()));
                 }
             };
 
             if is_login {
+                info!("{} {}", req.method(), req.uri().path());
                 if *req.method() == Method::POST {
                     return Box::new(handle_login(req, store));
                 } else {
@@ -271,11 +272,18 @@ impl RustyShare {
 
             if let Some(cookie) = req.headers().get(COOKIE) {
                 let session_id = Cookie::parse(cookie.to_str().unwrap()).unwrap();
-                let ok = login(&store, &hex::decode(session_id.value()).unwrap()).unwrap();
-                if !ok {
-                    return Box::new(future::ok(response::login_redirect()));
+                match store
+                    .lookup_session(&hex::decode(session_id.value()).unwrap())
+                    .unwrap()
+                {
+                    Some((_, user)) => info!("{} {} {}", user, req.method(), req.uri().path()),
+                    None => {
+                        info!("{} {}", req.method(), req.uri().path());
+                        return Box::new(future::ok(response::login_redirect()));
+                    }
                 }
             } else {
+                info!("{} {}", req.method(), req.uri().path());
                 return Box::new(future::ok(response::login_redirect()));
             }
         }
@@ -425,8 +433,4 @@ pub fn authenticate(store: &Store, name: &str, password: &str) -> QueryResult<Op
         });
 
     Ok(user)
-}
-
-pub fn login(store: &Store, session_id: &[u8]) -> QueryResult<bool> {
-    Ok(store.lookup_session(session_id)?.is_some())
 }

@@ -47,7 +47,7 @@ impl Store {
         Ok(())
     }
 
-    pub fn lookup_session(&self, id: &[u8]) -> QueryResult<Option<i32>> {
+    pub fn lookup_session(&self, id: &[u8]) -> QueryResult<Option<(i32, String)>> {
         let user_id = sessions::table
             .find(id)
             .select(sessions::user_id)
@@ -61,9 +61,16 @@ impl Store {
             {
                 error!("Unable to update session time for user {}: {}", user_id, e);
             }
-        }
 
-        Ok(user_id)
+            let user_name = users::table
+                .find(user_id)
+                .select(users::name)
+                .first::<String>(self.connection())?;
+
+            Ok(Some((user_id, user_name)))
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn transaction<T, E, F>(&self, f: F) -> Result<T, E>
