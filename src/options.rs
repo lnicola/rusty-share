@@ -2,17 +2,25 @@ use std::path::PathBuf;
 use structopt::StructOpt;
 
 #[derive(Clone, Debug, StructOpt)]
+pub enum Command {
+    #[structopt(name = "register", help = "Registers a new user")]
+    Register { user: String, pass: String },
+}
+
+#[derive(Clone, Debug, StructOpt)]
 pub struct Options {
     #[structopt(
         short = "r", long = "root", help = "Root path", default_value = ".", parse(from_os_str)
     )]
     pub root: PathBuf,
-    #[structopt(long = "db", help = "Database path", parse(from_os_str))]
-    pub db: Option<PathBuf>,
+    #[structopt(long = "db", help = "Database path")]
+    pub db: Option<String>,
     #[structopt(
         short = "l", long = "listen", help = "Address to listen on", default_value = "127.0.0.1"
     )]
     pub address: String,
     #[structopt(short = "p", long = "port", help = "Port to bind to", default_value = "8080")]
     pub port: u16,
+    #[structopt(subcommand)]
+    pub command: Option<Command>,
 }

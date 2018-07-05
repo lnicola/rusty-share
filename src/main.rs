@@ -36,6 +36,7 @@ extern crate tokio_threadpool;
 extern crate url;
 extern crate walkdir;
 
+use archive::Archive;
 use blocking_future::{BlockingFuture, BlockingFutureTry};
 use cookie::Cookie;
 use db::Store;
@@ -52,7 +53,7 @@ use hyper::{service, Body, Server};
 use libpasta::HashUpdate;
 use log::{error, info, log};
 use mime_sniffer::MimeTypeSniffer;
-use options::Options;
+use options::{Command, Options};
 use os_str_ext::OsStrExt3;
 use pipe::Pipe;
 use rand::Rng;
@@ -152,8 +153,6 @@ fn decode_request(form: &[u8]) -> Option<Vec<PathBuf>> {
     Some(files)
 }
 
-use archive::Archive;
-
 fn get_archive(archive: Archive) -> Body {
     let (tx, rx) = mpsc::channel(0);
     let pipe = Pipe::new(tx);
@@ -246,35 +245,37 @@ impl RustyShare {
     fn call(&self, req: Request) -> Box<Future<Item = Response, Error = Error> + Send + 'static> {
         info!("{} {}", req.method(), req.uri().path());
 
-        let is_login = req.uri().path() == "/login";
-        if is_login && *req.method() == Method::GET {
-            return Box::new(future::ok(page::login(None)));
-        }
-
-        let store = match db::establish_connection() {
-            Ok(conn) => Store::new(conn),
-            Err(e) => {
-                error!("{}", e);
+        if let Some(ref db) = self.options.db {
+            let is_login = req.uri().path() == "/login";
+            if is_login && *req.method() == Method::GET {
                 return Box::new(future::ok(page::login(None)));
             }
-        };
 
-        if is_login {
-            if *req.method() == Method::POST {
-                return Box::new(handle_login(req, store));
-            } else {
-                return Box::new(future::ok(response::method_not_allowed()));
+            let store = match db::establish_connection(&db) {
+                Ok(conn) => Store::new(conn),
+                Err(e) => {
+                    error!("{}", e);
+                    return Box::new(future::ok(response::internal_server_error()));
+                }
+            };
+
+            if is_login {
+                if *req.method() == Method::POST {
+                    return Box::new(handle_login(req, store));
+                } else {
+                    return Box::new(future::ok(response::method_not_allowed()));
+                }
             }
-        }
 
-        if let Some(cookie) = req.headers().get(COOKIE) {
-            let session_id = Cookie::parse(cookie.to_str().unwrap()).unwrap();
-            let ok = login(&store, &hex::decode(session_id.value()).unwrap()).unwrap();
-            if !ok {
+            if let Some(cookie) = req.headers().get(COOKIE) {
+                let session_id = Cookie::parse(cookie.to_str().unwrap()).unwrap();
+                let ok = login(&store, &hex::decode(session_id.value()).unwrap()).unwrap();
+                if !ok {
+                    return Box::new(future::ok(response::login_redirect()));
+                }
+            } else {
                 return Box::new(future::ok(response::login_redirect()));
             }
-        } else {
-            return Box::new(future::ok(response::login_redirect()));
         }
 
         let root = self.options.root.as_path();
@@ -292,12 +293,15 @@ fn run() -> Result<(), Error> {
     let options = Options::from_args();
 
     if let Some(ref db) = options.db {
+        let store = Store::new(db::establish_connection(db).unwrap());
         if !Path::new(&db).exists() {
-            let store = Store::new(db::establish_connection().unwrap());
             store
                 .initialize_database()
                 .expect("unable to create database");
-            register_user(&store, "grayshade", "hunter2").unwrap();
+        }
+
+        if let Some(Command::Register { ref user, ref pass }) = options.command {
+            register_user(&store, &user, &pass).unwrap();
         }
     }
 

@@ -12,8 +12,6 @@ pub fn last_inserted_row_id(connection: &SqliteConnection) -> QueryResult<i32> {
     diesel::select(last_insert_rowid).get_result(connection)
 }
 
-pub fn establish_connection() -> ConnectionResult<SqliteConnection> {
-    // let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let database_url = "rusty-share.db";
-    SqliteConnection::establish(&database_url)
+pub fn establish_connection(url: &str) -> ConnectionResult<SqliteConnection> {
+    SqliteConnection::establish(url)
 }
