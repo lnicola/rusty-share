@@ -3,7 +3,7 @@ use structopt::StructOpt;
 
 #[derive(Clone, Debug, StructOpt)]
 pub enum Command {
-    #[structopt(name = "register", help = "Registers a new user")]
+    #[structopt(name = "register", about = "Registers a new user")]
     Register { user: String, pass: String },
 }
 
