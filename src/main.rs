@@ -215,10 +215,9 @@ fn handle_post(req: Request, path: PathBuf, path_: PathBuf) -> Result<Response, 
 }
 
 #[async]
-fn handle_login(req: Request) -> Result<Response, Error> {
+fn handle_login(req: Request, store: Store) -> Result<Response, Error> {
     let b = await!(req.into_body().concat2())?;
     let form = serde_urlencoded::from_bytes::<LoginForm>(&b).unwrap();
-    let store = Store::new(db::establish_connection().unwrap());
     let session = authenticate(&store, &form.user, &form.pass).unwrap();
     let response = if let Some(session_id) = session {
         response::login_ok(hex::encode(&session_id))
@@ -245,17 +244,30 @@ struct LoginForm {
 
 impl RustyShare {
     fn call(&self, req: Request) -> Box<Future<Item = Response, Error = Error> + Send + 'static> {
-        if req.uri().path() == "/login" {
-            match *req.method() {
-                Method::GET => return Box::new(future::ok(page::login(None))),
-                Method::POST => return Box::new(handle_login(req)),
-                _ => return Box::new(future::ok(response::method_not_allowed())),
+        let is_login = req.uri().path() == "/login";
+
+        if is_login && *req.method() == Method::GET {
+            return Box::new(future::ok(page::login(None)));
+        }
+
+        let store = match db::establish_connection() {
+            Ok(conn) => Store::new(conn),
+            Err(e) => {
+                error!("{}", e);
+                return Box::new(future::ok(page::login(None)));
+            }
+        };
+
+        if is_login {
+            if *req.method() == Method::POST {
+                return Box::new(handle_login(req, store));
+            } else {
+                return Box::new(future::ok(response::method_not_allowed()));
             }
         }
 
         if let Some(cookie) = req.headers().get(COOKIE) {
             let session_id = Cookie::parse(cookie.to_str().unwrap()).unwrap();
-            let store = Store::new(db::establish_connection().unwrap());
             let ok = login(&store, &hex::decode(session_id.value()).unwrap()).unwrap();
             if !ok {
                 return Box::new(future::ok(response::login_redirect()));
