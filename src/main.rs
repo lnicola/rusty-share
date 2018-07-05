@@ -244,8 +244,9 @@ struct LoginForm {
 
 impl RustyShare {
     fn call(&self, req: Request) -> Box<Future<Item = Response, Error = Error> + Send + 'static> {
-        let is_login = req.uri().path() == "/login";
+        info!("{} {}", req.method(), req.uri().path());
 
+        let is_login = req.uri().path() == "/login";
         if is_login && *req.method() == Method::GET {
             return Box::new(future::ok(page::login(None)));
         }
@@ -279,7 +280,6 @@ impl RustyShare {
         let root = self.options.root.as_path();
         let path_ = decode_path(req.uri().path());
         let path = root.join(Path::new(&path_).strip_prefix("/").unwrap());
-        info!("{} {}", req.method(), req.uri().path());
         match *req.method() {
             Method::GET => Box::new(handle_get(req, path, path_.clone())),
             Method::POST => Box::new(handle_post(req, path, path_)),

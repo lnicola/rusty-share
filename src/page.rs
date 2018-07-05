@@ -76,20 +76,17 @@ pub fn login(message: Option<&str>) -> Response<Body> {
                 style { : Raw(include_str!("../assets/style.css")); }
             }
             body {
-                @ if let Some(message) = message {
-                    div(class="login-notification") { : message }
-                }
-                form(method="POST") {
-                    div {
-                        label(for="user") { : Raw("User name") }
-                        input(type="text", id="user", name="user");
+                div(class="login-page") {
+                    form(method="POST", class="form") {
+                        input(type="text", name="user", placeholder="username");
+                        input(type="password", name="pass", placeholder="password");
+                        button { : Raw("Log in") }
+                        @ if let Some(message) = message {
+                            p(class="message") { : message }
+                        }
                     }
-                    div {
-                        label(for="pass") { : Raw("Password") }
-                        input(type="password", id="pass", name="pass");
-                    }
-                    input(type="submit", value="Log in");
                 }
+
            }
         }
     };
