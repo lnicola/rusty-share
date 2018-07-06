@@ -78,7 +78,7 @@ pub fn login(message: Option<&str>) -> Response<Body> {
             body {
                 div(class="login-page") {
                     form(method="POST", class="form") {
-                        input(type="text", name="user", placeholder="username");
+                        input(type="text", name="user", placeholder="username", autofocus);
                         input(type="password", name="pass", placeholder="password");
                         button { : Raw("Log in") }
                         @ if let Some(message) = message {
