@@ -4,6 +4,7 @@ use http::header::{
 };
 use http::{Response, StatusCode};
 use hyper::Body;
+use time::Duration;
 
 pub fn page(html: String) -> Response<Body> {
     Response::builder()
@@ -22,7 +23,9 @@ pub fn static_page(html: &'static str) -> Response<Body> {
 }
 
 pub fn login_ok(session_id: String) -> Response<Body> {
-    let cookie = Cookie::new("sid", session_id);
+    let cookie = Cookie::build("sid", session_id)
+        .max_age(Duration::days(1))
+        .finish();
     Response::builder()
         .status(StatusCode::FOUND)
         .header(
@@ -34,13 +37,18 @@ pub fn login_ok(session_id: String) -> Response<Body> {
         .unwrap()
 }
 
-pub fn login_redirect() -> Response<Body> {
-    Response::builder()
-        .status(StatusCode::FOUND)
-        .header(
+pub fn login_redirect(destroy_session: bool) -> Response<Body> {
+    let mut builder = Response::builder();
+
+    if destroy_session {
+        let cookie = Cookie::build("sid", "").max_age(Duration::zero()).finish();
+        builder.header(
             SET_COOKIE,
-            HeaderValue::from_str(&Cookie::named("sid").to_string()).unwrap(),
-        )
+            HeaderValue::from_str(&cookie.to_string()).unwrap(),
+        );
+    }
+    builder
+        .status(StatusCode::FOUND)
         .header(LOCATION, HeaderValue::from_static("/login"))
         .body(Body::empty())
         .unwrap()

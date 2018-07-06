@@ -31,6 +31,7 @@ extern crate hex;
 extern crate serde_urlencoded;
 extern crate structopt;
 extern crate tar;
+extern crate time;
 extern crate tokio;
 extern crate tokio_threadpool;
 extern crate url;
@@ -281,12 +282,12 @@ impl RustyShare {
                     Some((_, user)) => info!("{} {} {}", user, req.method(), req.uri().path()),
                     None => {
                         info!("{} {}", req.method(), req.uri().path());
-                        return Box::new(future::ok(response::login_redirect()));
+                        return Box::new(future::ok(response::login_redirect(true)));
                     }
                 }
             } else {
                 info!("{} {}", req.method(), req.uri().path());
-                return Box::new(future::ok(response::login_redirect()));
+                return Box::new(future::ok(response::login_redirect(false)));
             }
         }
 
