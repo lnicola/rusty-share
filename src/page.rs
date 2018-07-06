@@ -73,6 +73,7 @@ pub fn login(message: Option<&str>) -> Response<Body> {
         : doctype::HTML;
         html {
             head {
+                meta(name="viewport", content="width=device-width, initial-scale=1");
                 style { : Raw(include_str!("../assets/style.css")); }
             }
             body {
