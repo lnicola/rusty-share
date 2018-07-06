@@ -1,4 +1,4 @@
-use cookie::Cookie;
+use cookie::{Cookie, SameSite};
 use http::header::{
     HeaderValue, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE, LOCATION, SET_COOKIE,
 };
@@ -25,6 +25,9 @@ pub fn static_page(html: &'static str) -> Response<Body> {
 pub fn login_ok(session_id: String) -> Response<Body> {
     let cookie = Cookie::build("sid", session_id)
         .max_age(Duration::days(1))
+        .http_only(true)
+        .secure(true)
+        .same_site(SameSite::Lax)
         .finish();
     Response::builder()
         .status(StatusCode::FOUND)
