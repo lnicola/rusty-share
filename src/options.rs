@@ -5,6 +5,8 @@ use structopt::StructOpt;
 pub enum Command {
     #[structopt(name = "register", about = "Registers a new user")]
     Register { user: String, pass: String },
+    #[structopt(name = "reset-password", about = "Resets a user password")]
+    ResetPassword { user: String, pass: String },
 }
 
 #[derive(Clone, Debug, StructOpt)]

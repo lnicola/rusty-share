@@ -27,8 +27,14 @@ impl Store {
         super::last_inserted_row_id(self.connection())
     }
 
-    pub fn update_password(&self, user_id: i32, password: &str) -> QueryResult<usize> {
+    pub fn update_password_by_id(&self, user_id: i32, password: &str) -> QueryResult<usize> {
         diesel::update(users::table.find(user_id))
+            .set(users::password.eq(password))
+            .execute(self.connection())
+    }
+
+    pub fn update_password_by_name(&self, name: &str, password: &str) -> QueryResult<usize> {
+        diesel::update(users::table.filter(users::name.eq(name)))
             .set(users::password.eq(password))
             .execute(self.connection())
     }

@@ -314,8 +314,16 @@ fn run() -> Result<(), Error> {
                 .expect("unable to create database");
         }
 
-        if let Some(Command::Register { ref user, ref pass }) = options.command {
-            register_user(&store, &user, &pass).unwrap();
+        match options.command {
+            Some(Command::Register { ref user, ref pass }) => {
+                register_user(&store, &user, &pass)?;
+                return Ok(());
+            },
+            Some(Command::ResetPassword { ref user, ref pass }) => {
+                reset_password(&store, &user, &pass)?;
+                return Ok(());
+            }
+            None => {}
         }
     }
 
@@ -408,7 +416,12 @@ fn render_index(path: &Path) -> Response {
 }
 
 pub fn register_user(store: &Store, name: &str, password: &str) -> QueryResult<i32> {
-    store.insert_user(&name, &libpasta::hash_password(&password))
+    store.insert_user(name, &libpasta::hash_password(password))
+}
+
+pub fn reset_password(store: &Store, name: &str, password: &str) -> QueryResult<()> {
+    store.update_password_by_name(name, &libpasta::hash_password(password))?;
+    Ok(())
 }
 
 pub fn authenticate(store: &Store, name: &str, password: &str) -> QueryResult<Option<[u8; 16]>> {
@@ -417,7 +430,7 @@ pub fn authenticate(store: &Store, name: &str, password: &str) -> QueryResult<Op
         .and_then(
             |user| match libpasta::verify_password_update_hash(&user.password, &password) {
                 HashUpdate::Verified(Some(new_hash)) => {
-                    if let Err(e) = store.update_password(user.id, &new_hash) {
+                    if let Err(e) = store.update_password_by_id(user.id, &new_hash) {
                         error!("Error migrating password for user id {}: {}", user.id, e);
                     }
                     Some(user)
