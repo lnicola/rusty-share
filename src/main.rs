@@ -33,6 +33,7 @@ extern crate structopt;
 extern crate tar;
 extern crate time;
 extern crate tokio;
+extern crate tokio_fs;
 extern crate tokio_threadpool;
 extern crate url;
 extern crate walkdir;
@@ -43,7 +44,6 @@ use cookie::Cookie;
 use db::Store;
 use diesel::QueryResult;
 use failure::{Error, ResultExt};
-use fs_async::FileExt;
 use futures::prelude::{async, await};
 use futures::sync::mpsc;
 use futures::{future, Future, Stream};
@@ -78,7 +78,6 @@ use walkdir::WalkDir;
 mod archive;
 mod blocking_future;
 mod db;
-mod fs_async;
 mod options;
 mod os_str_ext;
 mod page;
@@ -125,7 +124,7 @@ fn handle_get_file(req: Request, path: PathBuf) -> Result<Response, Error> {
 
 #[async]
 fn handle_get(req: Request, path: PathBuf, path_: PathBuf) -> Result<Response, Error> {
-    match await!(fs_async::metadata(path.clone())) {
+    match await!(tokio_fs::metadata(path.clone())) {
         Ok(metadata) => if metadata.is_dir() {
             await!(handle_get_dir(path, path_))
         } else {
@@ -318,7 +317,7 @@ fn run() -> Result<(), Error> {
             Some(Command::Register { ref user, ref pass }) => {
                 register_user(&store, &user, &pass)?;
                 return Ok(());
-            },
+            }
             Some(Command::ResetPassword { ref user, ref pass }) => {
                 reset_password(&store, &user, &pass)?;
                 return Ok(());

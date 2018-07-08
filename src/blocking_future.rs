@@ -65,7 +65,7 @@ where
             Ok(Async::Ready(Ok(v))) => Ok(Async::Ready(v)),
             Ok(Async::Ready(Err(err))) => Err(err),
             Ok(Async::NotReady) => Ok(Async::NotReady),
-            _ => panic!("`BlockingFuture` must be used from the context of the Tokio runtime."),
+            _ => panic!("`BlockingFutureTry` must be used from the context of the Tokio runtime."),
         }
     }
 }
