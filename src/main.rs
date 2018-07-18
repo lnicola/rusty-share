@@ -1,8 +1,9 @@
 #![feature(rust_2018_idioms)]
-#![feature(proc_macro)]
 #![feature(generators)]
 #![feature(duration_as_u128)]
 #![feature(try_from)]
+#![feature(use_extern_macros)]
+#![allow(proc_macro_derive_resolution_fallback)]
 #![allow(dead_code)]
 
 extern crate bytes;
