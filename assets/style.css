@@ -1,6 +1,6 @@
 body {
     margin: 0;
-    padding: 20px;
+    padding: 1.25rem;
     font-family: sans-serif;
 }
 
@@ -16,16 +16,16 @@ table {
 }
 
 col.selected {
-    width: 39px;
+    width: 2rem;
 }
 
 col.size {
-    width: 100px;
+    width: 6rem;
     text-align: right;
 }
 
 col.date {
-    width: 150px;
+    width: 9rem;
 }
 
 tr {
@@ -48,7 +48,7 @@ th {
 th,
 td {
     overflow: hidden;
-    padding: 8px;
+    padding: 0.5rem;
     text-align: left;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -63,7 +63,7 @@ td:nth-child(4) {
 
 .media-control {
     font-family: 'Apple Color Emoji','Segoe UI Emoji','NotoColorEmoji','Noto Color Emoji','Segoe UI Symbol','Android Emoji','EmojiSymbols';
-    font-size: 24pt;
+    font-size: 1.5rem;
 }
 
 .hidden {
@@ -71,7 +71,7 @@ td:nth-child(4) {
 }
 
 .login-page {
-  width: 340px;
+  width: 21rem;
   padding: 8% 0 0;
   margin: auto;
 }
@@ -80,7 +80,6 @@ td:nth-child(4) {
   position: relative;
   z-index: 1;
   background: #FFFFFF;
-  margin: 0 auto 100px;
   padding: 2rem;
   text-align: center;
   box-shadow: 0 0 20px 0 rgba(0, 0, 0, 0.2), 0 5px 5px 0 rgba(0, 0, 0, 0.24);
@@ -92,10 +91,10 @@ td:nth-child(4) {
   background: #f2f2f2;
   width: 100%;
   border: 0;
-  margin: 0 0 15px;
-  padding: 15px;
+  margin: 0 0 0.9rem;
+  padding: 0.9rem;
   box-sizing: border-box;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .form button {
@@ -105,9 +104,9 @@ td:nth-child(4) {
   background: #4CAF50;
   width: 100%;
   border: 0;
-  padding: 15px;
+  padding: 0.9rem;
   color: #FFFFFF;
-  font-size: 14px;
+  font-size: 0.875rem;
   cursor: pointer;
 }
 
@@ -116,7 +115,7 @@ td:nth-child(4) {
 }
 
 .form .message {
-  margin: 15px 0 0;
+  margin: 0.9rem 0 0;
   color: #b3b3b3;
-  font-size: 12px;
+  font-size: 0.75rem;
 }
