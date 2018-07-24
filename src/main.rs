@@ -248,6 +248,10 @@ struct LoginForm {
 
 impl RustyShare {
     fn call(&self, req: Request) -> Box<Future<Item = Response, Error = Error> + Send + 'static> {
+        if req.uri().path() == "/favicon.ico" {
+            info!("{} {}", req.method(), req.uri().path());
+            return Box::new(future::ok(response::not_found()));
+        }
         if let Some(ref db) = self.options.db {
             let is_login = req.uri().path() == "/login";
             if is_login && *req.method() == Method::GET {
