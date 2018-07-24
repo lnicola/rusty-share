@@ -10,6 +10,7 @@ extern crate bytes;
 extern crate bytesize;
 extern crate chrono;
 extern crate chrono_humanize;
+extern crate clap_port_flag;
 extern crate cookie;
 #[macro_use]
 extern crate diesel;
@@ -68,7 +69,6 @@ use std::convert::TryFrom;
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry};
 use std::io::{self, ErrorKind, SeekFrom};
-use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use structopt::StructOpt;
@@ -94,7 +94,8 @@ type Response = http::Response<Body>;
 
 #[derive(Clone)]
 struct RustyShare {
-    options: Options,
+    root: PathBuf,
+    db: Option<String>,
 }
 
 #[async]
@@ -252,7 +253,7 @@ impl RustyShare {
             info!("{} {}", req.method(), req.uri().path());
             return Box::new(future::ok(response::not_found()));
         }
-        if let Some(ref db) = self.options.db {
+        if let Some(ref db) = self.db {
             let is_login = req.uri().path() == "/login";
             if is_login && *req.method() == Method::GET {
                 info!("{} {}", req.method(), req.uri().path());
@@ -295,7 +296,7 @@ impl RustyShare {
             }
         }
 
-        let root = self.options.root.as_path();
+        let root = self.root.as_path();
         let path_ = decode_path(req.uri().path());
         let path = root.join(Path::new(&path_).strip_prefix("/").unwrap());
         match *req.method() {
@@ -331,23 +332,36 @@ fn run() -> Result<(), Error> {
         }
     }
 
-    let addr = SocketAddr::new(
-        options
-            .address
-            .parse::<IpAddr>()
-            .with_context(|_| "Unable to parse listen address")?,
-        options.port,
-    );
-    let rusty_share = RustyShare { options };
-
-    let server = Server::bind(&addr).serve(move || {
-        let rusty_share = rusty_share.clone();
-        service::service_fn(move |req| rusty_share.call(req).map_err(|e| e.compat()))
+    let listener = options.port.bind_or(8080)?;
+    let handle = tokio::reactor::Handle::current();
+    let listener = tokio::net::TcpListener::from_std(listener, &handle)?;
+    let addr = listener.local_addr()?;
+    let incoming = listener.incoming().map(|socket| {
+        socket
+            .set_nodelay(true)
+            .unwrap_or_else(|e| error!("Can't enable TCP_NODELAY: {}", e));
+        socket
+            .set_keepalive(Some(std::time::Duration::from_secs(7200)))
+            .unwrap_or_else(|e| error!("Can't enable TCP keepalive: {}", e));
+        socket
     });
 
-    println!("Listening on http://{}", server.local_addr());
+    let rusty_share = RustyShare {
+        root: options.root,
+        db: options.db,
+    };
 
-    tokio::run(server.map_err(|e| eprintln!("server error: {}", e)));
+    let service = move || {
+        let rusty_share = rusty_share.clone();
+        service::service_fn(move |req| rusty_share.call(req).map_err(|e| e.compat()))
+    };
+    let server = Server::builder(incoming)
+        .serve(service)
+        .map_err(|e| eprintln!("server error: {}", e));
+
+    println!("Listening on http://{}", addr);
+
+    tokio::run(server);
     Ok(())
 }
 

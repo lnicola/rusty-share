@@ -1,3 +1,4 @@
+use clap_port_flag::Port;
 use std::path::PathBuf;
 use structopt::StructOpt;
 
@@ -9,20 +10,20 @@ pub enum Command {
     ResetPassword { user: String, pass: String },
 }
 
-#[derive(Clone, Debug, StructOpt)]
+#[derive(Debug, StructOpt)]
 pub struct Options {
     #[structopt(
-        short = "r", long = "root", help = "Root path", default_value = ".", parse(from_os_str)
+        short = "r",
+        long = "root",
+        help = "The path to serve.",
+        default_value = ".",
+        parse(from_os_str)
     )]
     pub root: PathBuf,
-    #[structopt(long = "db", help = "Database path")]
+    #[structopt(long = "db", help = "The database path.")]
     pub db: Option<String>,
-    #[structopt(
-        short = "l", long = "listen", help = "Address to listen on", default_value = "127.0.0.1"
-    )]
-    pub address: String,
-    #[structopt(short = "p", long = "port", help = "Port to bind to", default_value = "8080")]
-    pub port: u16,
+    #[structopt(flatten)]
+    pub port: Port,
     #[structopt(subcommand)]
     pub command: Option<Command>,
 }
