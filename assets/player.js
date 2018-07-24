@@ -1,5 +1,6 @@
 Array.prototype.shuffle = function () {
-    var i = this.length, j, temp;
+    var i = this.length,
+        j, temp;
     if (i === 0) {
         return this;
     }
@@ -13,7 +14,7 @@ Array.prototype.shuffle = function () {
 }
 
 document.addEventListener("DOMContentLoaded", function () {
-    let rows = document.getElementsByTagName("tr");
+    let rows = document.getElementsByClassName("entry");
     if (rows.length > 5000) {
         return;
     }
@@ -60,6 +61,7 @@ document.addEventListener("DOMContentLoaded", function () {
             audio.play();
         }
     }
+
     function prev() {
         if (currentIndex > 0) {
             currentIndex--;

@@ -15,30 +15,30 @@ pub fn index(entries: &[ShareEntry]) -> Response<Body> {
         : doctype::HTML;
         html {
             head {
+                meta(name="viewport", content="width=device-width, initial-scale=1");
                 style { : Raw(include_str!("../assets/style.css")); }
             }
             body {
                 form(method="POST") {
-                    table(class="view") {
-                        colgroup {
-                            col(class="selected");
-                            col(class="name");
-                            col(class="size");
-                            col(class="date");
+                    div(class="view") {
+                        div(class="entry header") {
+                            div { }
+                            div { : Raw("Name") }
+                            div { : Raw("Size") }
+                            div { : Raw("Last modified") }
                         }
-                        tr(class="header") {
-                            th { }
-                            th { : Raw("Name") }
-                            th { : Raw("Size") }
-                            th { : Raw("Last modified") }
+                        div(class="entry") {
+                            div { }
+                            div { a(href=Raw("..")) { : Raw("..") } }
+                            div { }
+                            div { }
                         }
-                        tr { td { } td { a(href=Raw("..")) { : Raw("..") } } td { } td { } }
                         @ for entry in entries {
-                            tr {
-                                td { input(name="s", value=entry.link(), type="checkbox") }
-                                td { a(href=entry.link()) { : entry.name() } }
-                                td { : Raw(entry.size()) }
-                                td { : Raw(entry.date_string()) }
+                            div(class="entry") {
+                                div { input(name="s", value=entry.link(), type="checkbox") }
+                                div { a(href=entry.link()) { : entry.name() } }
+                                div { : Raw(entry.size()) }
+                                div { : Raw(entry.date_string()) }
                             }
                         }
                     }
