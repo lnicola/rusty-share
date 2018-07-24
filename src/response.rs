@@ -26,7 +26,7 @@ pub fn login_ok(session_id: String) -> Response<Body> {
     let cookie = Cookie::build("sid", session_id)
         .max_age(Duration::days(1))
         .http_only(true)
-        .secure(true)
+        // .secure(true)
         .same_site(SameSite::Lax)
         .finish();
     Response::builder()
