@@ -5,7 +5,6 @@ use diesel::{
     self, Connection, ExpressionMethods, OptionalExtension, QueryDsl, QueryResult, RunQueryDsl,
     SqliteConnection,
 };
-use log::{error, log};
 
 pub struct Store(SqliteConnection);
 
@@ -61,13 +60,6 @@ impl Store {
             .optional()?;
 
         if let Some(user_id) = user_id {
-            if let Err(e) = diesel::update(sessions::table.find(id))
-                .set(sessions::last_seen.eq(diesel::dsl::now))
-                .execute(self.connection())
-            {
-                error!("Unable to update session time for user {}: {}", user_id, e);
-            }
-
             let user_name = users::table
                 .find(user_id)
                 .select(users::name)
