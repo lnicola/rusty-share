@@ -1,15 +1,16 @@
 use super::models::User;
 use super::schema::{sessions, users};
+use super::Conn;
 use diesel::result::Error;
 use diesel::{
     self, Connection, ExpressionMethods, OptionalExtension, QueryDsl, QueryResult, RunQueryDsl,
     SqliteConnection,
 };
 
-pub struct Store(SqliteConnection);
+pub struct Store(Conn);
 
 impl Store {
-    pub fn new(connection: SqliteConnection) -> Self {
+    pub fn new(connection: Conn) -> Self {
         Store(connection)
     }
 

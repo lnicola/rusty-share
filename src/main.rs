@@ -43,7 +43,9 @@ extern crate walkdir;
 use archive::Archive;
 use blocking_future::{BlockingFuture, BlockingFutureTry};
 use cookie::Cookie;
-use db::Store;
+use db::{Conn, Store};
+use diesel::r2d2::{self, ConnectionManager};
+use diesel::sqlite::SqliteConnection;
 use diesel::QueryResult;
 use failure::{Error, ResultExt};
 use futures::prelude::{async, await};
@@ -70,6 +72,7 @@ use std::ffi::OsStr;
 use std::fs::{self, DirEntry};
 use std::io::{self, ErrorKind, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 use structopt::StructOpt;
 use tar::Builder;
@@ -89,13 +92,14 @@ mod share_entry;
 #[global_allocator]
 static A: System = System;
 
+type Pool = r2d2::Pool<ConnectionManager<SqliteConnection>>;
 type Request = http::Request<Body>;
 type Response = http::Response<Body>;
 
 #[derive(Clone)]
 struct RustyShare {
     root: PathBuf,
-    db: Option<String>,
+    pool: Option<Pool>,
 }
 
 #[async]
@@ -253,15 +257,15 @@ impl RustyShare {
             info!("{} {}", req.method(), req.uri().path());
             return Box::new(future::ok(response::not_found()));
         }
-        if let Some(ref db) = self.db {
+        if let Some(ref pool) = self.pool {
             let is_login = req.uri().path() == "/login";
             if is_login && *req.method() == Method::GET {
                 info!("{} {}", req.method(), req.uri().path());
                 return Box::new(future::ok(page::login(None)));
             }
 
-            let store = match db::establish_connection(&db) {
-                Ok(conn) => Store::new(conn),
+            let store = match pool.get() {
+                Ok(conn) => Store::new(Conn::new(conn)),
                 Err(e) => {
                     info!("{} {}", req.method(), req.uri().path());
                     error!("{}", e);
@@ -310,9 +314,16 @@ impl RustyShare {
 fn run() -> Result<(), Error> {
     let options = Options::from_args();
 
+    let mut pool = None;
     if let Some(ref db) = options.db {
+        let manager = ConnectionManager::<SqliteConnection>::new(db.clone());
+        let pool_ = Pool::builder().build(manager).expect("db pool");
+
         let should_initialize = !Path::new(&db).exists();
-        let store = Store::new(db::establish_connection(db).unwrap());
+        let conn = Conn::new(pool_.get().unwrap());
+        let store = Store::new(conn);
+        pool = Some(pool_);
+
         if should_initialize {
             store
                 .initialize_database()
@@ -346,13 +357,13 @@ fn run() -> Result<(), Error> {
         socket
     });
 
-    let rusty_share = RustyShare {
+    let rusty_share = Arc::new(RustyShare {
         root: options.root,
-        db: options.db,
-    };
+        pool,
+    });
 
     let service = move || {
-        let rusty_share = rusty_share.clone();
+        let rusty_share = Arc::clone(&rusty_share);
         service::service_fn(move |req| rusty_share.call(req).map_err(|e| e.compat()))
     };
     let server = Server::builder(incoming)
