@@ -371,17 +371,19 @@ fn run() -> Result<(), Error> {
         .map_err(|e| eprintln!("server error: {}", e));
 
     println!("Listening on http://{}", addr);
-
-    tokio::run(server);
+    tokio::spawn(server);
     Ok(())
 }
 
 fn main() {
     pretty_env_logger::init();
 
-    if let Err(e) = run() {
-        error!("{}", e);
-    }
+    tokio::run(futures::lazy(move || {
+        if let Err(e) = run() {
+            error!("{}", e);
+        }
+        Ok(())
+    }));
 }
 
 fn dir_entries(path: &Path) -> Result<impl Iterator<Item = DirEntry>, Error> {
