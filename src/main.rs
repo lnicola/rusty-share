@@ -1,4 +1,3 @@
-#![feature(rust_2018_idioms)]
 #![feature(generators)]
 #![feature(duration_as_u128)]
 #![feature(try_from)]
