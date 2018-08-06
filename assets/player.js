@@ -45,10 +45,12 @@ document.addEventListener("DOMContentLoaded", function () {
     });
 
     let currentIndex = 0;
+    let retryCount;
     let title = document.getElementById("song-title");
     let audio = document.getElementById("player");
 
     function change() {
+        retryCount = 0;
         audio.src = playlist[currentIndex].href;
         title.textContent = playlist[currentIndex].title;
     }
@@ -69,7 +71,27 @@ document.addEventListener("DOMContentLoaded", function () {
             audio.play();
         }
     }
+
+    function error(e) {
+        let audio = e.target;
+        let err = audio.error;
+        console.log(err.message);
+        if  (err.code === MediaError.MEDIA_ERR_NETWORK) {
+            if (retryCount++ < 10) {
+                setTimeout(function() {
+                    let currentTime = audio.currentTime;
+                    audio.src = audio.src;
+                    audio.currentTime = currentTime;
+                    audio.play();
+                }, 0);
+            }
+        } else {
+            next();
+        }
+    }
+
     audio.addEventListener("ended", next);
+    audio.addEventListener("error", error);
 
     document.getElementById("shuffle").addEventListener("click", function () {
         playlist.shuffle();
