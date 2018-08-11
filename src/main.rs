@@ -343,18 +343,7 @@ fn run() -> Result<(), Error> {
     }
 
     let listener = options.port.bind_or(8080)?;
-    let handle = tokio::reactor::Handle::current();
-    let listener = tokio::net::TcpListener::from_std(listener, &handle)?;
     let addr = listener.local_addr()?;
-    let incoming = listener.incoming().map(|socket| {
-        socket
-            .set_nodelay(true)
-            .unwrap_or_else(|e| error!("Can't enable TCP_NODELAY: {}", e));
-        socket
-            .set_keepalive(Some(std::time::Duration::from_secs(7200)))
-            .unwrap_or_else(|e| error!("Can't enable TCP keepalive: {}", e));
-        socket
-    });
 
     let rusty_share = Arc::new(RustyShare {
         root: options.root,
@@ -365,7 +354,8 @@ fn run() -> Result<(), Error> {
         let rusty_share = Arc::clone(&rusty_share);
         service::service_fn(move |req| rusty_share.call(req).map_err(|e| e.compat()))
     };
-    let server = Server::builder(incoming)
+    let server = Server::from_tcp(listener)?
+        .tcp_nodelay(true)
         .serve(service)
         .map_err(|e| eprintln!("server error: {}", e));
 
