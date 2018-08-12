@@ -15,14 +15,6 @@ pub fn page(html: String) -> Response<Body> {
         .unwrap()
 }
 
-pub fn static_page(html: &'static str) -> Response<Body> {
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(CONTENT_TYPE, "text/html; charset=utf-8")
-        .body(Body::from(html))
-        .unwrap()
-}
-
 pub fn login_ok(session_id: String, redirect: &str) -> Response<Body> {
     let cookie = Cookie::build("sid", session_id)
         .max_age(Duration::days(1))

@@ -6,7 +6,7 @@ use http::header::HeaderValue;
 use http::header::SET_COOKIE;
 use http::Response;
 use hyper::Body;
-use log::{error, log};
+use log::error;
 use response;
 use share_entry::ShareEntry;
 
