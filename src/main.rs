@@ -220,12 +220,21 @@ fn handle_post(req: Request, path: PathBuf, path_: PathBuf) -> Result<Response, 
 
 #[async]
 fn handle_login(req: Request, store: Store) -> Result<Response, Error> {
+    let mut redirect = String::from("/");
+    if let Some(query) = req.uri().query() {
+        for (name, value) in form_urlencoded::parse(query.as_bytes()) {
+            if name == "redirect" {
+                redirect = value.into_owned();
+            }
+        }
+    }
+
     let b = await!(req.into_body().concat2())?;
     let form = serde_urlencoded::from_bytes::<LoginForm>(&b).unwrap();
     let session = authenticate(&store, &form.user, &form.pass).unwrap();
     let response = if let Some(session_id) = session {
         info!("Authenticating {}: success", form.user);
-        response::login_ok(hex::encode(&session_id))
+        response::login_ok(hex::encode(&session_id), &redirect)
     } else {
         info!("Authenticating {}: failed", form.user);
         page::login(Some(
@@ -290,12 +299,18 @@ impl RustyShare {
                     Some((_, user)) => info!("{} {} {}", user, req.method(), req.uri().path()),
                     None => {
                         info!("{} {}", req.method(), req.uri().path());
-                        return Box::new(future::ok(response::login_redirect(true)));
+                        return Box::new(future::ok(response::login_redirect(
+                            req.uri().path(),
+                            true,
+                        )));
                     }
                 }
             } else {
                 info!("{} {}", req.method(), req.uri().path());
-                return Box::new(future::ok(response::login_redirect(false)));
+                return Box::new(future::ok(response::login_redirect(
+                    req.uri().path(),
+                    false,
+                )));
             }
         }
 

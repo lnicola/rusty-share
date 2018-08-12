@@ -4,6 +4,7 @@ use http::header::{
 };
 use http::{Response, StatusCode};
 use hyper::Body;
+use percent_encoding;
 use time::Duration;
 
 pub fn page(html: String) -> Response<Body> {
@@ -22,7 +23,7 @@ pub fn static_page(html: &'static str) -> Response<Body> {
         .unwrap()
 }
 
-pub fn login_ok(session_id: String) -> Response<Body> {
+pub fn login_ok(session_id: String, redirect: &str) -> Response<Body> {
     let cookie = Cookie::build("sid", session_id)
         .max_age(Duration::days(1))
         .http_only(true)
@@ -35,12 +36,15 @@ pub fn login_ok(session_id: String) -> Response<Body> {
             SET_COOKIE,
             HeaderValue::from_str(&cookie.to_string()).unwrap(),
         )
-        .header(LOCATION, HeaderValue::from_static("/"))
+        .header(LOCATION, HeaderValue::from_str(redirect).unwrap())
         .body(Body::empty())
         .unwrap()
 }
 
-pub fn login_redirect(destroy_session: bool) -> Response<Body> {
+pub fn login_redirect(path: &str, destroy_session: bool) -> Response<Body> {
+    let path =
+        percent_encoding::percent_encode(path.as_bytes(), percent_encoding::DEFAULT_ENCODE_SET)
+            .to_string();
     let mut builder = Response::builder();
 
     if destroy_session {
@@ -52,7 +56,10 @@ pub fn login_redirect(destroy_session: bool) -> Response<Body> {
     }
     builder
         .status(StatusCode::FOUND)
-        .header(LOCATION, HeaderValue::from_static("/login"))
+        .header(
+            LOCATION,
+            HeaderValue::from_str(&format!("/login?redirect={}", path)).unwrap(),
+        )
         .body(Body::empty())
         .unwrap()
 }
