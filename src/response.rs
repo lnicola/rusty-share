@@ -27,8 +27,7 @@ pub fn login_ok(session_id: String, redirect: &str) -> Response<Body> {
         .header(
             SET_COOKIE,
             HeaderValue::from_str(&cookie.to_string()).unwrap(),
-        )
-        .header(LOCATION, HeaderValue::from_str(redirect).unwrap())
+        ).header(LOCATION, HeaderValue::from_str(redirect).unwrap())
         .body(Body::empty())
         .unwrap()
 }
@@ -51,8 +50,7 @@ pub fn login_redirect(path: &str, destroy_session: bool) -> Response<Body> {
         .header(
             LOCATION,
             HeaderValue::from_str(&format!("/login?redirect={}", path)).unwrap(),
-        )
-        .body(Body::empty())
+        ).body(Body::empty())
         .unwrap()
 }
 

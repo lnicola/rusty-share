@@ -396,8 +396,7 @@ fn dir_entries(path: &Path) -> Result<impl Iterator<Item = DirEntry>, Error> {
                 error!("{}", e);
                 e
             }).ok()
-        })
-        .filter(|file| !is_hidden(&file.file_name())))
+        }).filter(|file| !is_hidden(&file.file_name())))
 }
 
 fn get_dir_entries(path: &Path) -> Result<Vec<ShareEntry>, Error> {
@@ -414,8 +413,7 @@ fn get_dir_entries(path: &Path) -> Result<Vec<ShareEntry>, Error> {
                 );
                 None
             }
-        })
-        .collect::<Vec<_>>();
+        }).collect::<Vec<_>>();
 
     entries.par_sort_unstable_by(|e1, e2| (e2.is_dir(), e2.date()).cmp(&(e1.is_dir(), e1.date())));
 
@@ -471,8 +469,7 @@ pub fn authenticate(store: &Store, name: &str, password: &str) -> QueryResult<Op
                 HashUpdate::Verified(None) => Some(user),
                 HashUpdate::Failed => None,
             },
-        )
-        .map(|user| {
+        ).map(|user| {
             let session_id = rand::thread_rng().gen::<[u8; 16]>();
             if let Err(e) = store.create_session(&session_id, user.id) {
                 error!("Error saving session for user id {}: {}", user.id, e);

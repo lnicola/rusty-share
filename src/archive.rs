@@ -56,8 +56,7 @@ impl Archive {
                     entry.path().display(),
                     root.display()
                 )
-            })?
-            .to_string_lossy()
+            })?.to_string_lossy()
             .into_owned();
 
         let mut entry_len = 512;
