@@ -45,7 +45,7 @@ impl Archive {
         }
     }
 
-    pub fn add_entry(&mut self, root: &Path, entry: &DirEntry) -> Result<(), Error> {
+    pub fn add_entry(&mut self, root: &Path, entry: DirEntry) -> Result<(), Error> {
         let is_dir = entry.file_type().is_dir();
         let relative_path = entry
             .path()
@@ -76,7 +76,7 @@ impl Archive {
         self.size += entry_len;
 
         let entry = ArchiveEntry {
-            path: entry.path().to_path_buf(),
+            path: entry.into_path(),
             relative_path,
             is_dir,
         };

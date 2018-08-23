@@ -198,7 +198,7 @@ fn handle_post(req: Request, path: PathBuf, path_: PathBuf) -> Result<Response, 
             for entry in entries {
                 if let Err(e) = entry
                     .map_err(|e| e.into())
-                    .and_then(|entry| archive.add_entry(&path, &entry))
+                    .and_then(|entry| archive.add_entry(&path, entry))
                 {
                     error!("{}", e);
                 }
