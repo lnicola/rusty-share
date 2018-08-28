@@ -32,7 +32,6 @@ extern crate structopt;
 extern crate tar;
 extern crate time;
 extern crate tokio;
-extern crate tokio_fs;
 extern crate tokio_threadpool;
 extern crate url;
 extern crate walkdir;
@@ -127,7 +126,7 @@ fn handle_get_file(req: Request, path: PathBuf) -> Result<Response, Error> {
 
 #[async]
 fn handle_get(req: Request, path: PathBuf, path_: PathBuf) -> Result<Response, Error> {
-    match await!(tokio_fs::metadata(path.clone())) {
+    match await!(tokio::fs::metadata(path.clone())) {
         Ok(metadata) => if metadata.is_dir() {
             await!(handle_get_dir(path, path_))
         } else {
