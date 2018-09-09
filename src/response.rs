@@ -4,8 +4,8 @@ use http::header::{
 };
 use http::{Response, StatusCode};
 use hyper::Body;
-use percent_encoding;
 use time::Duration;
+use url::percent_encoding;
 
 pub fn page(html: String) -> Response<Body> {
     Response::builder()
@@ -83,13 +83,6 @@ pub fn bad_request() -> Response<Body> {
 pub fn not_found() -> Response<Body> {
     Response::builder()
         .status(StatusCode::NOT_FOUND)
-        .body(Body::empty())
-        .unwrap()
-}
-
-pub fn method_not_allowed() -> Response<Body> {
-    Response::builder()
-        .status(StatusCode::METHOD_NOT_ALLOWED)
         .body(Body::empty())
         .unwrap()
 }

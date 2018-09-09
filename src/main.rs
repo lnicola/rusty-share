@@ -13,6 +13,7 @@ extern crate cookie;
 extern crate diesel;
 extern crate failure;
 extern crate futures_await as futures;
+extern crate hex;
 extern crate horrorshow;
 extern crate http;
 extern crate http_serve;
@@ -24,15 +25,16 @@ extern crate pretty_env_logger;
 extern crate rand;
 extern crate rayon;
 extern crate serde;
-#[macro_use]
 extern crate serde_derive;
-extern crate hex;
 extern crate serde_urlencoded;
 extern crate structopt;
 extern crate tar;
 extern crate time;
 extern crate tokio;
+extern crate tokio_io;
 extern crate tokio_threadpool;
+#[macro_use]
+extern crate tower_web;
 extern crate url;
 extern crate walkdir;
 
@@ -47,10 +49,10 @@ use failure::{Error, ResultExt};
 use futures::prelude::{async, await};
 use futures::sync::mpsc;
 use futures::{future, Future, Stream};
-use http::header::{CONTENT_TYPE, COOKIE};
-use http::{HeaderMap, Method};
+use http::header::CONTENT_TYPE;
+use http::HeaderMap;
 use http_serve::ChunkedReadFile;
-use hyper::{service, Body, Server};
+use hyper::Body;
 use libpasta::HashUpdate;
 use log::{error, info};
 use mime_sniffer::MimeTypeSniffer;
@@ -62,17 +64,15 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
 use share_entry::ShareEntry;
 use std::alloc::System;
-use std::borrow::Cow;
 use std::convert::TryFrom;
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry};
 use std::io::{self, ErrorKind, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::Instant;
 use structopt::StructOpt;
 use tar::Builder;
-use url::{form_urlencoded, percent_encoding};
+use tower_web::ServiceBuilder;
 use walkdir::WalkDir;
 
 mod archive;
@@ -89,8 +89,28 @@ mod share_entry;
 static A: System = System;
 
 type Pool = r2d2::Pool<ConnectionManager<SqliteConnection>>;
-type Request = http::Request<Body>;
 type Response = http::Response<Body>;
+
+struct RequestExtract(http::Request<()>);
+use tower_web::extract::{Context, Extract, Immediate};
+use tower_web::util::BufStream;
+
+impl<B: BufStream> Extract<B> for RequestExtract {
+    type Future = Immediate<Self>;
+
+    fn extract(ctx: &Context) -> Self::Future {
+        let mut request = http::Request::builder()
+            .method(ctx.request().method())
+            .version(ctx.request().version())
+            .uri(ctx.request().uri())
+            .body(())
+            .unwrap();
+        request
+            .headers_mut()
+            .extend(ctx.request().headers().clone());
+        Immediate::ok(RequestExtract(request))
+    }
+}
 
 #[derive(Clone)]
 struct RustyShare {
@@ -99,60 +119,41 @@ struct RustyShare {
 }
 
 #[async]
-fn handle_get_dir(path: PathBuf, path_: PathBuf) -> Result<Response, Error> {
-    if !path_.to_str().unwrap().ends_with('/') {
-        Ok(response::found(&(path_.to_str().unwrap().to_owned() + "/")))
-    } else {
-        let rendered = await!(BlockingFuture::new(move || render_index(&path))).unwrap();
-        Ok(rendered)
-    }
-}
-
-#[async]
-fn handle_get_file(req: Request, path: PathBuf) -> Result<Response, Error> {
-    let mut file = await!(tokio::fs::File::open(path.clone()))?;
+fn handle_get_file(path: PathBuf, req: http::Request<()>) -> Result<Response, Error> {
+    let mut file = await!(tokio::fs::File::open(path))?;
     let mut buf = [0; 16];
-    let (file, buf) = await!(tokio::io::read_exact(file, buf))?;
+    let (file, buf, len) = await!(tokio_io::io::read(file, buf))?;
     let (file, _) = await!(file.seek(SeekFrom::Start(0)))?;
     let file = file.into_std();
 
     let mut headers = HeaderMap::new();
+    let buf = &buf[..len];
     if let Some(mime) = buf.sniff_mime_type() {
         headers.insert(CONTENT_TYPE, mime.parse().unwrap());
     }
+
     let crf = ChunkedReadFile::new(file, None, headers)?;
     Ok(http_serve::serve(crf, &req))
 }
 
 #[async]
-fn handle_get(req: Request, path: PathBuf, path_: PathBuf) -> Result<Response, Error> {
+fn handle_get(path: PathBuf, uri_path: String, req: http::Request<()>) -> Result<Response, Error> {
     match await!(tokio::fs::metadata(path.clone())) {
         Ok(metadata) => if metadata.is_dir() {
-            await!(handle_get_dir(path, path_))
+            if !uri_path.ends_with('/') {
+                Ok(response::found(&(uri_path + "/")))
+            } else {
+                let rendered = await!(BlockingFuture::new(move || render_index(&path))).unwrap();
+                Ok(rendered)
+            }
         } else {
-            await!(handle_get_file(req, path))
+            await!(handle_get_file(path, req))
         },
         Err(e) => {
             error!("{}", e);
             Ok(response::not_found())
         }
     }
-}
-
-fn decode_path(p: &str) -> PathBuf {
-    OsStr::from_bytes(Cow::from(percent_encoding::percent_decode(p.as_bytes())).as_ref()).into()
-}
-
-fn decode_request(form: &[u8]) -> Option<Vec<PathBuf>> {
-    let mut files = Vec::new();
-    for (name, value) in form_urlencoded::parse(&form) {
-        if name == "s" {
-            files.push(decode_path(&value))
-        } else {
-            return None;
-        }
-    }
-    Some(files)
 }
 
 fn get_archive(archive: Archive) -> Body {
@@ -176,10 +177,13 @@ fn get_archive(archive: Archive) -> Body {
 }
 
 #[async]
-fn handle_post(req: Request, path: PathBuf, path_: PathBuf) -> Result<Response, Error> {
-    let b = await!(req.into_body().concat2())?;
-
-    let response = if let Some(mut files) = decode_request(&b) {
+fn handle_post(files: Files, path: PathBuf) -> Result<Response, Error> {
+    let mut files = files
+        .0
+        .into_iter()
+        .filter_map(|p| if p.0 == "s" { Some(p.1) } else { None })
+        .collect::<Vec<_>>();
+    let response = {
         if files.is_empty() {
             for entry in dir_entries(&path)? {
                 let path = entry.path();
@@ -204,120 +208,178 @@ fn handle_post(req: Request, path: PathBuf, path_: PathBuf) -> Result<Response, 
             }
         }
 
-        let archive_name = get_archive_name(&path_, &files);
+        let archive_name = get_archive_name(&path, &files);
         let archive_size = archive.size();
         let body = get_archive(archive);
         response::archive(archive_size, body, &archive_name)
-    } else {
-        response::bad_request()
     };
 
     Ok(response)
 }
 
-#[async]
-fn handle_login(req: Request, store: Store) -> Result<Response, Error> {
-    let mut redirect = String::from("/");
-    if let Some(query) = req.uri().query() {
-        for (name, value) in form_urlencoded::parse(query.as_bytes()) {
-            if name == "redirect" {
-                redirect = value.into_owned();
-            }
-        }
-    }
-
-    let b = await!(req.into_body().concat2())?;
-    let form = serde_urlencoded::from_bytes::<LoginForm>(&b).unwrap();
-    let session = authenticate(&store, &form.user, &form.pass).unwrap();
-    let response = if let Some(session_id) = session {
-        info!("Authenticating {}: success", form.user);
-        response::login_ok(hex::encode(&session_id), &redirect)
-    } else {
-        info!("Authenticating {}: failed", form.user);
-        page::login(Some(
-            "Login failed. Please contact the site owner to reset your password.",
-        ))
-    };
-
-    Ok(response)
-}
-
-fn get_archive_name(path_: &Path, files: &[PathBuf]) -> String {
-    let file = if files.len() == 1 { &files[0] } else { path_ };
+fn get_archive_name(path_: &PathBuf, files: &[PathBuf]) -> String {
+    let file = if files.len() == 1 { &files[0] } else { &path_ };
     file.with_extension("tar")
         .file_name()
         .map(|f| f.to_string_lossy().into_owned())
         .unwrap_or_else(|| String::from("archive.tar"))
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Debug, Extract)]
 struct LoginForm {
     user: String,
     pass: String,
 }
 
-impl RustyShare {
-    fn call(&self, req: Request) -> Box<Future<Item = Response, Error = Error> + Send + 'static> {
-        if req.uri().path() == "/favicon.ico" {
-            info!("{} {}", req.method(), req.uri().path());
-            return Box::new(future::ok(response::not_found()));
-        }
-        if let Some(ref pool) = self.pool {
-            let is_login = req.uri().path() == "/login";
-            if is_login && *req.method() == Method::GET {
-                info!("{} {}", req.method(), req.uri().path());
-                return Box::new(future::ok(page::login(None)));
-            }
+#[derive(Debug, Extract)]
+struct LoginQuery {
+    redirect: Option<String>,
+}
 
-            let store = match pool.get() {
-                Ok(conn) => Store::new(Conn::new(conn)),
-                Err(e) => {
-                    info!("{} {}", req.method(), req.uri().path());
+#[derive(Debug, Deserialize, Extract)]
+#[serde(transparent)]
+struct Files(Vec<(String, PathBuf)>);
+
+impl_web! {
+    impl RustyShare {
+        fn check_auth(&self, path: &Path, cookie: Option<String>) -> Result<String, Response> {
+            if let Some(ref pool) = self.pool {
+                let redirect = || {
+                    response::login_redirect(
+                        &(String::from("/browse/") + path.to_string_lossy().as_ref()),
+                        false,
+                    )
+                };
+                let cookie = cookie.ok_or_else(redirect)?;
+                let session_id = Cookie::parse(cookie).map_err(|e| {
                     error!("{}", e);
-                    return Box::new(future::ok(response::internal_server_error()));
-                }
-            };
-
-            if is_login {
-                info!("{} {}", req.method(), req.uri().path());
-                if *req.method() == Method::POST {
-                    return Box::new(handle_login(req, store));
-                } else {
-                    return Box::new(future::ok(response::method_not_allowed()));
-                }
-            }
-
-            if let Some(cookie) = req.headers().get(COOKIE) {
-                let session_id = Cookie::parse(cookie.to_str().unwrap()).unwrap();
-                match store
-                    .lookup_session(&hex::decode(session_id.value()).unwrap())
-                    .unwrap()
-                {
-                    Some((_, user)) => info!("{} {} {}", user, req.method(), req.uri().path()),
-                    None => {
-                        info!("{} {}", req.method(), req.uri().path());
-                        return Box::new(future::ok(response::login_redirect(
-                            req.uri().path(),
-                            true,
-                        )));
-                    }
-                }
+                    response::bad_request()
+                })?;
+                let session_id = hex::decode(session_id.value()).map_err(|e| {
+                    error!("{}", e);
+                    redirect()
+                })?;
+                let conn = pool.get().map_err(|e| {
+                    error!("{}", e);
+                    response::internal_server_error()
+                })?;
+                let store = Store::new(Conn::new(conn));
+                let (_, user) = store
+                    .lookup_session(&session_id)
+                    .map_err(|e| {
+                        error!("{}", e);
+                        response::internal_server_error()
+                    })?.ok_or_else(redirect)?;
+                Ok(user)
             } else {
-                info!("{} {}", req.method(), req.uri().path());
-                return Box::new(future::ok(response::login_redirect(
-                    req.uri().path(),
-                    false,
-                )));
+                Ok(String::new())
             }
         }
 
-        let root = self.root.as_path();
-        let path_ = decode_path(req.uri().path());
-        let path = root.join(Path::new(&path_).strip_prefix("/").unwrap());
-        match *req.method() {
-            Method::GET => Box::new(handle_get(req, path, path_.clone())),
-            Method::POST => Box::new(handle_post(req, path, path_)),
-            _ => Box::new(future::ok(response::method_not_allowed())),
+        #[get("/")]
+        fn index(&self) -> Result<Response, ()> {
+            Ok(response::found("/browse"))
+        }
+
+        #[get("/favicon.ico")]
+        fn favicon(&self) -> Result<Response, ()> {
+            Ok(response::not_found())
+        }
+
+        #[get("/login")]
+        fn login_page(&self) -> Result<Response, ()> {
+            if self.pool.is_some() {
+                Ok(page::login(None))
+            } else {
+                Ok(response::not_found())
+            }
+        }
+
+        #[post("/login")]
+        fn login_action(&self, query_string: LoginQuery, body: LoginForm) -> Result<Response, ()> {
+            if let Some(ref pool) = self.pool {
+                let redirect = query_string
+                    .redirect
+                    .unwrap_or_else(|| String::from("/browse"));
+
+                let store = match pool.get() {
+                    Ok(conn) => Store::new(Conn::new(conn)),
+                    Err(e) => {
+                        error!("{}", e);
+                        return Ok(response::internal_server_error());
+                    }
+                };
+
+                let session = authenticate(&store, &body.user, &body.pass).unwrap();
+                let response = if let Some(session_id) = session {
+                    info!("Authenticating {}: success", body.user);
+                    response::login_ok(hex::encode(&session_id), &redirect)
+                } else {
+                    info!("Authenticating {}: failed", body.user);
+                    page::login(Some(
+                        "Login failed. Please contact the site owner to reset your password.",
+                    ))
+                };
+
+                Ok(response)
+            } else {
+                Ok(response::not_found())
+            }
+        }
+
+        #[get("/browse")]
+        fn browse_fallback(
+            &self,
+            cookie: Option<String>,
+            request: RequestExtract,
+        ) -> Box<dyn Future<Item = Response, Error = Error> + Send + 'static> {
+            self.browse(PathBuf::new(), cookie, request)
+        }
+
+        #[get("/browse/*path")]
+        fn browse(
+            &self,
+            path: PathBuf,
+            cookie: Option<String>,
+            request: RequestExtract,
+        ) -> Box<dyn Future<Item = Response, Error = Error> + Send + 'static> {
+            match self.check_auth(&path, cookie) {
+                Ok(user) => {
+                    info!("{} GET /browse/{}", user, path.display());
+                }
+                Err(response) => return Box::new(future::ok(response)),
+            }
+
+            let disk_path = self.root.as_path().join(&path);
+            let uri_path = request.0.uri().path().to_string();
+            Box::new(handle_get(disk_path, uri_path, request.0))
+        }
+
+        #[post("/browse")]
+        fn archive_fallback(
+            &self,
+            body: Files,
+            cookie: Option<String>,
+        ) -> Box<dyn Future<Item = Response, Error = Error> + Send + 'static> {
+            self.archive(PathBuf::new(), body, cookie)
+        }
+
+        #[post("/browse/*path")]
+        fn archive(
+            &self,
+            path: PathBuf,
+            body: Files,
+            cookie: Option<String>,
+        ) -> Box<dyn Future<Item = Response, Error = Error> + Send + 'static> {
+            match self.check_auth(&path, cookie) {
+                Ok(user) => {
+                    info!("{} POST /browse/{}", user, path.display());
+                }
+                Err(response) => return Box::new(future::ok(response)),
+            }
+
+            let disk_path = self.root.as_path().join(&path);
+            Box::new(handle_post(body, disk_path))
         }
     }
 }
@@ -354,25 +416,24 @@ fn run() -> Result<(), Error> {
         }
     }
 
-    let listener = options.port.bind_or(8080)?;
-    let addr = listener.local_addr()?;
+    let addr = "127.0.0.1:8080".parse().unwrap();
+    println!("Listening on http://{}", addr);
 
-    let rusty_share = Arc::new(RustyShare {
+    let rusty_share = RustyShare {
         root: options.root,
         pool,
-    });
-
-    let service = move || {
-        let rusty_share = Arc::clone(&rusty_share);
-        service::service_fn(move |req| rusty_share.call(req).map_err(|e| e.compat()))
     };
-    let server = Server::from_tcp(listener)?
-        .tcp_nodelay(true)
-        .serve(service)
-        .map_err(|e| eprintln!("server error: {}", e));
 
-    println!("Listening on http://{}", addr);
-    tokio::spawn(server);
+    ServiceBuilder::new()
+        .resource(rusty_share)
+        .run(&addr)
+        .unwrap();
+
+    // let server = Server::from_tcp(listener)?
+    //     .tcp_nodelay(true)
+    //     .serve(service)
+    //     .map_err(|e| eprintln!("server error: {}", e));
+
     Ok(())
 }
 
