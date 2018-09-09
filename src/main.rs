@@ -15,12 +15,12 @@ extern crate horrorshow;
 extern crate http;
 extern crate http_serve;
 extern crate hyper;
-extern crate libpasta;
 extern crate log;
 extern crate mime_sniffer;
 extern crate pretty_env_logger;
 extern crate rand;
 extern crate rayon;
+extern crate scrypt;
 extern crate serde;
 extern crate serde_derive;
 extern crate serde_urlencoded;
@@ -51,7 +51,6 @@ use http::header::CONTENT_TYPE;
 use http::HeaderMap;
 use http_serve::ChunkedReadFile;
 use hyper::Body;
-use libpasta::HashUpdate;
 use log::{error, info};
 use mime_sniffer::MimeTypeSniffer;
 use options::{Command, Options};
@@ -60,6 +59,7 @@ use pipe::Pipe;
 use rand::Rng;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
+use scrypt::ScryptParams;
 use share_entry::ShareEntry;
 use std::alloc::System;
 use std::ffi::OsStr;
@@ -512,29 +512,27 @@ fn render_index(path: &Path) -> Response {
 }
 
 pub fn register_user(store: &Store, name: &str, password: &str) -> QueryResult<i32> {
-    store.insert_user(name, &libpasta::hash_password(password))
+    let params = ScryptParams::new(15, 8, 1).expect("recommended scrypt params should work");
+    let hash = scrypt::scrypt_simple(password, &params).unwrap();
+    store.insert_user(name, &hash)
 }
 
 pub fn reset_password(store: &Store, name: &str, password: &str) -> QueryResult<()> {
-    store.update_password_by_name(name, &libpasta::hash_password(password))?;
+    let params = ScryptParams::new(15, 8, 1).expect("recommended scrypt params should work");
+    let hash = scrypt::scrypt_simple(password, &params).unwrap();
+    store.update_password_by_name(name, &hash)?;
     Ok(())
 }
 
 pub fn authenticate(store: &Store, name: &str, password: &str) -> QueryResult<Option<[u8; 16]>> {
     let user = store
         .find_user(name)?
-        .and_then(
-            |user| match libpasta::verify_password_update_hash(&user.password, &password) {
-                HashUpdate::Verified(Some(new_hash)) => {
-                    if let Err(e) = store.update_password_by_id(user.id, &new_hash) {
-                        error!("Error migrating password for user id {}: {}", user.id, e);
-                    }
-                    Some(user)
-                }
-                HashUpdate::Verified(None) => Some(user),
-                HashUpdate::Failed => None,
-            },
-        ).map(|user| {
+        .and_then(|user| {
+            scrypt::scrypt_check(password, &user.password)
+                .map(|_| user)
+                .map_err(|e| error!("Password verification failed for user {}: {}", name, e))
+                .ok()
+        }).map(|user| {
             let session_id = rand::thread_rng().gen::<[u8; 16]>();
             if let Err(e) = store.create_session(&session_id, user.id) {
                 error!("Error saving session for user id {}: {}", user.id, e);
