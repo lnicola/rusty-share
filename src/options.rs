@@ -1,4 +1,3 @@
-use clap_port_flag::Port;
 use std::path::PathBuf;
 use structopt::StructOpt;
 
@@ -22,8 +21,20 @@ pub struct Options {
     pub root: PathBuf,
     #[structopt(long = "db", help = "The database path.")]
     pub db: Option<String>,
-    #[structopt(flatten)]
-    pub port: Port,
+    #[structopt(
+        short = "l",
+        long = "listen",
+        help = "The address to bind to.",
+        default_value = "127.0.0.1"
+    )]
+    pub address: String,
+    #[structopt(
+        short = "p",
+        long = "port",
+        help = "The port to listen on.",
+        default_value = "8080"
+    )]
+    pub port: u16,
     #[structopt(subcommand)]
     pub command: Option<Command>,
 }

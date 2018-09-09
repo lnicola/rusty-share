@@ -7,7 +7,6 @@ extern crate bytes;
 extern crate bytesize;
 extern crate chrono;
 extern crate chrono_humanize;
-extern crate clap_port_flag;
 extern crate cookie;
 #[macro_use]
 extern crate diesel;
@@ -68,6 +67,7 @@ use std::convert::TryFrom;
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry};
 use std::io::{self, ErrorKind, SeekFrom};
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use structopt::StructOpt;
@@ -416,7 +416,13 @@ fn run() -> Result<(), Error> {
         }
     }
 
-    let addr = "127.0.0.1:8080".parse().unwrap();
+    let addr = SocketAddr::new(
+        options
+            .address
+            .parse::<IpAddr>()
+            .with_context(|_| "Unable to parse listen address")?,
+        options.port,
+    );
     println!("Listening on http://{}", addr);
 
     let rusty_share = RustyShare {

@@ -6,7 +6,6 @@ version = "0.1.0"
 [dependencies]
 bytes = "0.4"
 bytesize = "1.0"
-clap-port-flag = "0.3"
 chrono = "0.4"
 chrono-humanize = "0.0.11"
 cookie = "0.11"
@@ -32,7 +31,7 @@ time = "0.1"
 tokio = "0.1"
 tokio-io = "0.1"
 tokio-threadpool = "0.1"
-tower-web = { git = "https://github.com/lnicola/tower-web/", branch = "decode-pathbuf" }
+tower-web = { git = "https://github.com/lnicola/tower-web", branch = "decode-pathbuf" }
 url = "1.7"
 walkdir = "2.2"
 
