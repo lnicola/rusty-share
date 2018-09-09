@@ -17,7 +17,7 @@ http = "0.1"
 http-serve = "0.1"
 hyper = "0.12"
 log = "0.4"
-mime-sniffer = "0.1"
+mime_guess = "1.8"
 pretty_env_logger = "0.2"
 rand = "0.5"
 rayon = "1.0"
@@ -31,7 +31,7 @@ time = "0.1"
 tokio = "0.1"
 tokio-io = "0.1"
 tokio-threadpool = "0.1"
-tower-web = { git = "https://github.com/lnicola/tower-web", branch = "decode-pathbuf" }
+tower-web = { git = "https://github.com/lnicola/tower-web/", branch = "decode-pathbuf" }
 url = "1.7"
 walkdir = "2.2"
 

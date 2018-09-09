@@ -15,7 +15,7 @@ extern crate http;
 extern crate http_serve;
 extern crate hyper;
 extern crate log;
-extern crate mime_sniffer;
+extern crate mime_guess;
 extern crate pretty_env_logger;
 extern crate rand;
 extern crate rayon;
@@ -46,11 +46,10 @@ use failure::{Error, ResultExt};
 use futures::sync::mpsc;
 use futures::{future, Future, Stream};
 use http::header::CONTENT_TYPE;
-use http::HeaderMap;
+use http::header::{HeaderMap, HeaderValue};
 use http_serve::ChunkedReadFile;
 use hyper::Body;
 use log::{error, info};
-use mime_sniffer::MimeTypeSniffer;
 use options::{Command, Options};
 use os_str_ext::OsStrExt;
 use pipe::Pipe;
@@ -61,8 +60,8 @@ use scrypt::ScryptParams;
 use share_entry::ShareEntry;
 use std::alloc::System;
 use std::ffi::OsStr;
-use std::fs::{self, DirEntry};
-use std::io::{self, ErrorKind, SeekFrom};
+use std::fs::{self, DirEntry, File};
+use std::io::{self, ErrorKind};
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -120,21 +119,15 @@ fn handle_get_file(
     path: PathBuf,
     req: http::Request<()>,
 ) -> impl Future<Item = Response, Error = Error> {
-    tokio::fs::File::open(path)
-        .and_then(|file| {
-            let buf = [0; 16];
-            tokio_io::io::read(file, buf)
-        }).and_then(|(file, buf, len)| {
-            let mut headers = HeaderMap::new();
-            let buf = &buf[..len];
-            if let Some(mime) = buf.sniff_mime_type() {
-                headers.insert(CONTENT_TYPE, mime.parse().unwrap());
-            }
-            file.seek(SeekFrom::Start(0))
-                .map(|(file, _)| (file, headers))
-        }).and_then(|(file, headers)| {
-            BlockingFutureTry::new(|| ChunkedReadFile::new(file.into_std(), None, headers))
-        }).map_err(|e| e.into())
+    let mut headers = HeaderMap::new();
+    {
+        let extension = path.extension().and_then(OsStr::to_str).unwrap_or("");
+        if let Some(mime) = mime_guess::get_mime_type_str(extension) {
+            headers.insert(CONTENT_TYPE, HeaderValue::from_static(mime));
+        }
+    }
+    BlockingFutureTry::new(|| ChunkedReadFile::new(File::open(path)?, None, headers))
+        .map_err(|e| e.into())
         .and_then(move |crf| future::ok(http_serve::serve(crf, &req)))
 }
 
