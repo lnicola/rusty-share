@@ -1,4 +1,3 @@
-#![feature(generators)]
 #![allow(proc_macro_derive_resolution_fallback)]
 
 extern crate bytes;
@@ -9,7 +8,7 @@ extern crate cookie;
 #[macro_use]
 extern crate diesel;
 extern crate failure;
-extern crate futures_await as futures;
+extern crate futures;
 extern crate hex;
 extern crate horrorshow;
 extern crate http;
@@ -44,7 +43,6 @@ use diesel::sqlite::SqliteConnection;
 use diesel::QueryResult;
 use duration_ext::DurationExt;
 use failure::{Error, ResultExt};
-use futures::prelude::{async, await};
 use futures::sync::mpsc;
 use futures::{future, Future, Stream};
 use http::header::CONTENT_TYPE;
@@ -70,6 +68,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use structopt::StructOpt;
 use tar::Builder;
+use tower_web::util::tuple::Either3;
 use tower_web::ServiceBuilder;
 use walkdir::WalkDir;
 
@@ -117,42 +116,54 @@ struct RustyShare {
     pool: Option<Pool>,
 }
 
-#[async]
-fn handle_get_file(path: PathBuf, req: http::Request<()>) -> Result<Response, Error> {
-    let mut file = await!(tokio::fs::File::open(path))?;
-    let mut buf = [0; 16];
-    let (file, buf, len) = await!(tokio_io::io::read(file, buf))?;
-    let (file, _) = await!(file.seek(SeekFrom::Start(0)))?;
-    let file = file.into_std();
-
-    let mut headers = HeaderMap::new();
-    let buf = &buf[..len];
-    if let Some(mime) = buf.sniff_mime_type() {
-        headers.insert(CONTENT_TYPE, mime.parse().unwrap());
-    }
-
-    let crf = ChunkedReadFile::new(file, None, headers)?;
-    Ok(http_serve::serve(crf, &req))
+fn handle_get_file(
+    path: PathBuf,
+    req: http::Request<()>,
+) -> impl Future<Item = Response, Error = Error> {
+    tokio::fs::File::open(path)
+        .and_then(|file| {
+            let buf = [0; 16];
+            tokio_io::io::read(file, buf)
+        }).and_then(|(file, buf, len)| {
+            let mut headers = HeaderMap::new();
+            let buf = &buf[..len];
+            if let Some(mime) = buf.sniff_mime_type() {
+                headers.insert(CONTENT_TYPE, mime.parse().unwrap());
+            }
+            file.seek(SeekFrom::Start(0))
+                .map(|(file, _)| (file, headers))
+        }).and_then(|(file, headers)| {
+            BlockingFutureTry::new(|| ChunkedReadFile::new(file.into_std(), None, headers))
+        }).map_err(|e| e.into())
+        .and_then(move |crf| future::ok(http_serve::serve(crf, &req)))
 }
 
-#[async]
-fn handle_get(path: PathBuf, uri_path: String, req: http::Request<()>) -> Result<Response, Error> {
-    match await!(tokio::fs::metadata(path.clone())) {
-        Ok(metadata) => if metadata.is_dir() {
-            if !uri_path.ends_with('/') {
-                Ok(response::found(&(uri_path + "/")))
+fn handle_get(
+    path: PathBuf,
+    uri_path: String,
+    req: http::Request<()>,
+) -> impl Future<Item = Response, Error = Error> {
+    tokio::fs::metadata(path.clone())
+        .then(|metadata| match metadata {
+            Ok(metadata) => if metadata.is_dir() {
+                if !uri_path.ends_with('/') {
+                    Either3::A(future::ok(response::found(&(uri_path + "/"))))
+                } else {
+                    Either3::B(
+                        BlockingFuture::new(move || render_index(&path))
+                            .map_err(|_| unreachable!()),
+                    )
+                }
             } else {
-                let rendered = await!(BlockingFuture::new(move || render_index(&path))).unwrap();
-                Ok(rendered)
+                Either3::C(handle_get_file(path, req))
+            },
+            Err(e) => {
+                error!("{}", e);
+                Either3::A(future::ok(response::not_found()))
             }
-        } else {
-            await!(handle_get_file(path, req))
-        },
-        Err(e) => {
-            error!("{}", e);
-            Ok(response::not_found())
-        }
-    }
+        }).map(|r| match r {
+            Either3::A(r) | Either3::B(r) | Either3::C(r) => r,
+        })
 }
 
 fn get_archive(archive: Archive) -> Body {
@@ -175,14 +186,13 @@ fn get_archive(archive: Archive) -> Body {
     Body::wrap_stream(rx)
 }
 
-#[async]
-fn handle_post(files: Files, path: PathBuf) -> Result<Response, Error> {
-    let mut files = files
-        .0
-        .into_iter()
-        .filter_map(|p| if p.0 == "s" { Some(p.1) } else { None })
-        .collect::<Vec<_>>();
-    let response = {
+fn handle_post(files: Files, path: PathBuf) -> impl Future<Item = Response, Error = Error> {
+    BlockingFutureTry::new(move || {
+        let mut files = files
+            .0
+            .into_iter()
+            .filter_map(|p| if p.0 == "s" { Some(p.1) } else { None })
+            .collect::<Vec<_>>();
         if files.is_empty() {
             for entry in dir_entries(&path)? {
                 let path = entry.path();
@@ -190,34 +200,34 @@ fn handle_post(files: Files, path: PathBuf) -> Result<Response, Error> {
                 files.push(file_name.into());
             }
         }
-
-        let mut archive = Archive::new();
-        for file in &files {
-            info!("{}", file.display());
-            let entries = WalkDir::new(path.join(file))
-                .into_iter()
-                .filter_entry(|e| !is_hidden(e.file_name()));
-            for entry in entries {
-                if let Err(e) = entry
-                    .map_err(|e| e.into())
-                    .and_then(|entry| archive.add_entry(&path, entry))
-                {
-                    error!("{}", e);
+        let response = {
+            let mut archive = Archive::new();
+            for file in &files {
+                info!("{}", file.display());
+                let entries = WalkDir::new(path.join(file))
+                    .into_iter()
+                    .filter_entry(|e| !is_hidden(e.file_name()));
+                for entry in entries {
+                    if let Err(e) = entry
+                        .map_err(|e| e.into())
+                        .and_then(|entry| archive.add_entry(&path, entry))
+                    {
+                        error!("{}", e);
+                    }
                 }
             }
-        }
 
-        let archive_name = get_archive_name(&path, &files);
-        let archive_size = archive.size();
-        let body = get_archive(archive);
-        response::archive(archive_size, body, &archive_name)
-    };
-
-    Ok(response)
+            let archive_name = get_archive_name(&path, &files);
+            let archive_size = archive.size();
+            let body = get_archive(archive);
+            response::archive(archive_size, body, &archive_name)
+        };
+        Ok(response)
+    })
 }
 
-fn get_archive_name(path_: &PathBuf, files: &[PathBuf]) -> String {
-    let file = if files.len() == 1 { &files[0] } else { &path_ };
+fn get_archive_name(path_: &Path, files: &[PathBuf]) -> String {
+    let file = if files.len() == 1 { &files[0] } else { path_ };
     file.with_extension("tar")
         .file_name()
         .map(|f| f.to_string_lossy().into_owned())
