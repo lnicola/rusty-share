@@ -9,10 +9,11 @@ bytesize = "1.0"
 chrono = "0.4"
 chrono-humanize = "0.0.11"
 cookie = "0.11"
+diesel = { version = "1.3", default-features = false, features = ["chrono", "r2d2", "sqlite"] }
 failure = "0.1"
 futures = "0.1"
-horrorshow = "0.6"
 hex = "0.3"
+horrorshow = "0.6"
 http = "0.1"
 http-serve = "0.1"
 hyper = "0.12"
@@ -29,16 +30,10 @@ structopt = "0.2"
 tar = "0.4"
 time = "0.1"
 tokio = "0.1"
-tokio-io = "0.1"
 tokio-threadpool = "0.1"
 tower-web = { git = "https://github.com/lnicola/tower-web/", branch = "decode-pathbuf" }
 url = "1.7"
 walkdir = "2.2"
-
-[dependencies.diesel]
-default-features = false
-features = ["chrono", "r2d2", "sqlite"]
-version = "1.3"
 
 [profile.release]
 codegen-units = 1

@@ -985,7 +985,6 @@ dependencies = [
  "tar 0.4.16 (registry+https://github.com/rust-lang/crates.io-index)",
  "time 0.1.40 (registry+https://github.com/rust-lang/crates.io-index)",
  "tokio 0.1.8 (registry+https://github.com/rust-lang/crates.io-index)",
- "tokio-io 0.1.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "tokio-threadpool 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "tower-web 0.2.2 (git+https://github.com/lnicola/tower-web/?branch=decode-pathbuf)",
  "url 1.7.1 (registry+https://github.com/rust-lang/crates.io-index)",

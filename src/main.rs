@@ -27,7 +27,6 @@ extern crate structopt;
 extern crate tar;
 extern crate time;
 extern crate tokio;
-extern crate tokio_io;
 extern crate tokio_threadpool;
 #[macro_use]
 extern crate tower_web;
