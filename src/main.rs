@@ -55,7 +55,7 @@ use libpasta::HashUpdate;
 use log::{error, info};
 use mime_sniffer::MimeTypeSniffer;
 use options::{Command, Options};
-use os_str_ext::OsStrExt3;
+use os_str_ext::OsStrExt;
 use pipe::Pipe;
 use rand::Rng;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
