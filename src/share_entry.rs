@@ -1,7 +1,6 @@
 use bytesize::ByteSize;
 use chrono::{DateTime, Local};
 use chrono_humanize::HumanTime;
-use std::convert::TryFrom;
 use std::fs::DirEntry;
 use std::io::Error;
 #[cfg(not(target_os = "windows"))]
@@ -44,12 +43,8 @@ impl ShareEntry {
     pub fn date_string(&self) -> &str {
         &self.date_string
     }
-}
 
-impl<'a> TryFrom<&'a DirEntry> for ShareEntry {
-    type Error = Error;
-
-    fn try_from(value: &DirEntry) -> Result<Self, Self::Error> {
+    pub fn try_from(value: &DirEntry) -> Result<Self, Error> {
         let metadata = value.metadata()?;
         let is_dir = metadata.is_dir();
         let mut name = value.file_name();

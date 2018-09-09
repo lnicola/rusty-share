@@ -1,6 +1,4 @@
 #![feature(generators)]
-#![feature(duration_as_u128)]
-#![feature(try_from)]
 #![allow(proc_macro_derive_resolution_fallback)]
 
 extern crate bytes;
@@ -44,6 +42,7 @@ use db::{Conn, Store};
 use diesel::r2d2::{self, ConnectionManager};
 use diesel::sqlite::SqliteConnection;
 use diesel::QueryResult;
+use duration_ext::DurationExt;
 use failure::{Error, ResultExt};
 use futures::prelude::{async, await};
 use futures::sync::mpsc;
@@ -63,7 +62,6 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
 use share_entry::ShareEntry;
 use std::alloc::System;
-use std::convert::TryFrom;
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry};
 use std::io::{self, ErrorKind, SeekFrom};
@@ -78,6 +76,7 @@ use walkdir::WalkDir;
 mod archive;
 mod blocking_future;
 mod db;
+mod duration_ext;
 mod options;
 mod os_str_ext;
 mod page;
@@ -500,8 +499,8 @@ fn render_index(path: &Path) -> Response {
             let render_time = Instant::now() - render_start;
             info!(
                 "enumerate: {} ms, render: {} ms",
-                enumerate_time.as_millis(),
-                render_time.as_millis()
+                enumerate_time.to_millis(),
+                render_time.to_millis()
             );
             rendered
         }
