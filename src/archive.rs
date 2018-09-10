@@ -1,4 +1,4 @@
-use failure::{Error, ResultExt};
+use error::Error;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -19,13 +19,13 @@ impl ArchiveEntry {
         if self.is_dir {
             builder
                 .append_dir(&self.relative_path, &self.path)
-                .with_context(|_| format!("Unable to add {} to archive", self.path.display()))?;
+                .map_err(|e| Error::from_io(e, self.path.clone()))?;
         } else {
-            let mut file = File::open(&self.path)
-                .with_context(|_| format!("Unable to open {}", self.path.display()))?;
+            let mut file =
+                File::open(&self.path).map_err(|e| Error::from_io(e, self.path.clone()))?;
             builder
                 .append_file(&self.relative_path, &mut file)
-                .with_context(|_| format!("Unable to add {} to archive", self.path.display()))?;
+                .map_err(|e| Error::from_io(e, self.path.clone()))?;
         }
 
         Ok(())
@@ -50,14 +50,9 @@ impl Archive {
         let relative_path = entry
             .path()
             .strip_prefix(&root)
-            .with_context(|_| {
-                format!(
-                    "Unable to make path {} relative from {}",
-                    entry.path().display(),
-                    root.display()
-                )
-            })?
-            .to_string_lossy()
+            .map_err(|e| {
+                Error::from_strip_prefix(e, entry.path().to_path_buf(), root.to_path_buf())
+            })?.to_string_lossy()
             .into_owned();
 
         let mut entry_len = 512;
@@ -69,9 +64,7 @@ impl Archive {
             }
         }
         if !is_dir {
-            let metadata = entry.metadata().with_context(|_| {
-                format!("Unable to read metadata for {}", entry.path().display())
-            })?;
+            let metadata = entry.metadata()?;
             entry_len += (metadata.len() + 511) / 512 * 512;
         }
         self.size += entry_len;

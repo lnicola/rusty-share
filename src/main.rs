@@ -7,7 +7,6 @@ extern crate chrono_humanize;
 extern crate cookie;
 #[macro_use]
 extern crate diesel;
-extern crate failure;
 extern crate futures;
 extern crate hex;
 extern crate horrorshow;
@@ -41,11 +40,10 @@ use diesel::r2d2::{self, ConnectionManager};
 use diesel::sqlite::SqliteConnection;
 use diesel::QueryResult;
 use duration_ext::DurationExt;
-use failure::{Error, ResultExt};
+use error::Error;
 use futures::sync::mpsc;
 use futures::{future, Future, Stream};
-use http::header::CONTENT_TYPE;
-use http::header::{HeaderMap, HeaderValue};
+use http::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use http_serve::ChunkedReadFile;
 use hyper::Body;
 use log::{error, info};
@@ -55,12 +53,12 @@ use pipe::Pipe;
 use rand::Rng;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
+use request_wrapper::RequestWrapper;
 use scrypt::ScryptParams;
 use share_entry::ShareEntry;
 use std::alloc::System;
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry, File};
-use std::io::{self, ErrorKind};
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -74,10 +72,12 @@ mod archive;
 mod blocking_future;
 mod db;
 mod duration_ext;
+mod error;
 mod options;
 mod os_str_ext;
 mod page;
 mod pipe;
+mod request_wrapper;
 mod response;
 mod share_entry;
 
@@ -87,28 +87,6 @@ static A: System = System;
 type Pool = r2d2::Pool<ConnectionManager<SqliteConnection>>;
 type Response = http::Response<Body>;
 
-struct RequestExtract(http::Request<()>);
-use tower_web::extract::{Context, Extract, Immediate};
-use tower_web::util::BufStream;
-
-impl<B: BufStream> Extract<B> for RequestExtract {
-    type Future = Immediate<Self>;
-
-    fn extract(ctx: &Context) -> Self::Future {
-        let mut request = http::Request::builder()
-            .method(ctx.request().method())
-            .version(ctx.request().version())
-            .uri(ctx.request().uri())
-            .body(())
-            .unwrap();
-        request
-            .headers_mut()
-            .extend(ctx.request().headers().clone());
-        Immediate::ok(RequestExtract(request))
-    }
-}
-
-#[derive(Clone)]
 struct RustyShare {
     root: PathBuf,
     pool: Option<Pool>,
@@ -125,9 +103,11 @@ fn handle_get_file(
             headers.insert(CONTENT_TYPE, HeaderValue::from_static(mime));
         }
     }
-    BlockingFutureTry::new(|| ChunkedReadFile::new(File::open(path)?, None, headers))
-        .map_err(|e| e.into())
-        .and_then(move |crf| future::ok(http_serve::serve(crf, &req)))
+    BlockingFutureTry::new(move || {
+        File::open(&path)
+            .and_then(|file| ChunkedReadFile::new(file, None, headers))
+            .map_err(|e| Error::from_io(e, path.to_path_buf()))
+    }).and_then(move |crf| future::ok(http_serve::serve(crf, &req)))
 }
 
 fn handle_get(
@@ -150,7 +130,7 @@ fn handle_get(
                 Either3::C(handle_get_file(path, req))
             },
             Err(e) => {
-                error!("{}", e);
+                error!("{}", Error::from_io(e, path.clone()));
                 Either3::A(future::ok(response::not_found()))
             }
         }).map(|r| match r {
@@ -172,9 +152,7 @@ fn get_archive(archive: Archive) -> Body {
     }).map_err(|e| error!("{}", e));
     tokio::spawn(f);
 
-    let rx = rx
-        .map_err(|_| Error::from(io::Error::new(ErrorKind::UnexpectedEof, "incomplete")).compat());
-
+    let rx = rx.map_err(|_| Error::StreamCancelled);
     Body::wrap_stream(rx)
 }
 
@@ -201,7 +179,7 @@ fn handle_post(files: Files, path: PathBuf) -> impl Future<Item = Response, Erro
                     .filter_entry(|e| !is_hidden(e.file_name()));
                 for entry in entries {
                     if let Err(e) = entry
-                        .map_err(|e| e.into())
+                        .map_err(Error::from)
                         .and_then(|entry| archive.add_entry(&path, entry))
                     {
                         error!("{}", e);
@@ -332,7 +310,7 @@ impl_web! {
         fn browse_fallback(
             &self,
             cookie: Option<String>,
-            request: RequestExtract,
+            request: RequestWrapper,
         ) -> Box<dyn Future<Item = Response, Error = Error> + Send + 'static> {
             self.browse(PathBuf::new(), cookie, request)
         }
@@ -342,7 +320,7 @@ impl_web! {
             &self,
             path: PathBuf,
             cookie: Option<String>,
-            request: RequestExtract,
+            request: RequestWrapper,
         ) -> Box<dyn Future<Item = Response, Error = Error> + Send + 'static> {
             match self.check_auth(&path, cookie) {
                 Ok(user) => {
@@ -352,8 +330,9 @@ impl_web! {
             }
 
             let disk_path = self.root.as_path().join(&path);
-            let uri_path = request.0.uri().path().to_string();
-            Box::new(handle_get(disk_path, uri_path, request.0))
+            let request = request.into();
+            let uri_path = request.uri().path().to_string();
+            Box::new(handle_get(disk_path, uri_path, request))
         }
 
         #[post("/browse")]
@@ -421,7 +400,7 @@ fn run() -> Result<(), Error> {
         options
             .address
             .parse::<IpAddr>()
-            .with_context(|_| "Unable to parse listen address")?,
+            .map_err(|e| Error::from_addr_parse(e, options.address.clone()))?,
         options.port,
     );
     println!("Listening on http://{}", addr);
@@ -457,7 +436,7 @@ fn main() {
 
 fn dir_entries(path: &Path) -> Result<impl Iterator<Item = DirEntry>, Error> {
     Ok(fs::read_dir(path)
-        .with_context(|_| format!("Unable to read directory {}", path.display()))?
+        .map_err(|e| Error::from_io(e, path.to_path_buf()))?
         .filter_map(|file| {
             file.map_err(|e| {
                 error!("{}", e);
@@ -473,11 +452,7 @@ fn get_dir_entries(path: &Path) -> Result<Vec<ShareEntry>, Error> {
         .filter_map(|entry| match ShareEntry::try_from(&entry) {
             Ok(e) => Some(e),
             Err(e) => {
-                error!(
-                    "Unable to read metadata of {}: {}",
-                    entry.path().display(),
-                    e
-                );
+                error!("{}", e);
                 None
             }
         }).collect::<Vec<_>>();
@@ -513,15 +488,16 @@ fn render_index(path: &Path) -> Response {
     }
 }
 
-pub fn register_user(store: &Store, name: &str, password: &str) -> QueryResult<i32> {
+pub fn register_user(store: &Store, name: &str, password: &str) -> Result<i32, Error> {
     let params = ScryptParams::new(15, 8, 1).expect("recommended scrypt params should work");
-    let hash = scrypt::scrypt_simple(password, &params).unwrap();
-    store.insert_user(name, &hash)
+    let hash = scrypt::scrypt_simple(password, &params)?;
+    let user_id = store.insert_user(name, &hash)?;
+    Ok(user_id)
 }
 
-pub fn reset_password(store: &Store, name: &str, password: &str) -> QueryResult<()> {
+pub fn reset_password(store: &Store, name: &str, password: &str) -> Result<(), Error> {
     let params = ScryptParams::new(15, 8, 1).expect("recommended scrypt params should work");
-    let hash = scrypt::scrypt_simple(password, &params).unwrap();
+    let hash = scrypt::scrypt_simple(password, &params)?;
     store.update_password_by_name(name, &hash)?;
     Ok(())
 }

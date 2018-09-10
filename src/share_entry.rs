@@ -1,13 +1,13 @@
 use bytesize::ByteSize;
 use chrono::{DateTime, Local};
 use chrono_humanize::HumanTime;
+use error::Error;
 use std::fs::DirEntry;
-use std::io::Error;
 #[cfg(not(target_os = "windows"))]
 use std::os::unix::ffi::OsStrExt;
 use url::percent_encoding;
 #[cfg(target_os = "windows")]
-use OsStrExt3;
+use OsStrExt;
 
 #[derive(Debug)]
 pub struct ShareEntry {
@@ -45,7 +45,9 @@ impl ShareEntry {
     }
 
     pub fn try_from(value: &DirEntry) -> Result<Self, Error> {
-        let metadata = value.metadata()?;
+        let metadata = value
+            .metadata()
+            .map_err(|e| Error::from_io(e, value.path().to_path_buf()))?;
         let is_dir = metadata.is_dir();
         let mut name = value.file_name();
         if metadata.is_dir() {
@@ -60,7 +62,10 @@ impl ShareEntry {
         } else {
             String::new()
         };
-        let date = metadata.modified()?.into();
+        let date = metadata
+            .modified()
+            .map_err(|e| Error::from_io(e, value.path().to_path_buf()))?
+            .into();
         let date_string = HumanTime::from(date).to_string();
         Ok(Self {
             name,
