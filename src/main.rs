@@ -57,6 +57,7 @@ use request_wrapper::RequestWrapper;
 use scrypt::ScryptParams;
 use share_entry::ShareEntry;
 use std::alloc::System;
+use std::borrow::Cow;
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry, File};
 use std::net::{IpAddr, SocketAddr};
@@ -66,6 +67,7 @@ use structopt::StructOpt;
 use tar::Builder;
 use tower_web::util::tuple::Either3;
 use tower_web::ServiceBuilder;
+use url::percent_encoding;
 use walkdir::WalkDir;
 
 mod archive;
@@ -162,7 +164,10 @@ fn handle_post(files: Files, path: PathBuf) -> impl Future<Item = Response, Erro
             .0
             .into_iter()
             .filter_map(|p| if p.0 == "s" { Some(p.1) } else { None })
-            .collect::<Vec<_>>();
+            .map(|s| {
+                let percent_decoded = Cow::from(percent_encoding::percent_decode(s.as_bytes()));
+                PathBuf::from(OsStr::from_bytes(percent_decoded.as_ref()))
+            }).collect::<Vec<_>>();
         if files.is_empty() {
             for entry in dir_entries(&path)? {
                 let path = entry.path();
@@ -217,7 +222,7 @@ struct LoginQuery {
 
 #[derive(Debug, Deserialize, Extract)]
 #[serde(transparent)]
-struct Files(Vec<(String, PathBuf)>);
+struct Files(Vec<(String, String)>);
 
 impl_web! {
     impl RustyShare {
