@@ -66,7 +66,7 @@ impl From<diesel::result::Error> for Error {
 }
 
 impl Display for Error {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Error::Io { cause, path: None } => cause.fmt(f),
             Error::Io {

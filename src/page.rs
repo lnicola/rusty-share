@@ -7,8 +7,8 @@ use http::header::SET_COOKIE;
 use http::Response;
 use hyper::Body;
 use log::error;
-use response;
-use share_entry::ShareEntry;
+use crate::response;
+use crate::share_entry::ShareEntry;
 
 pub fn index(entries: &[ShareEntry]) -> Response<Body> {
     let page = html! {

@@ -13,7 +13,7 @@ impl RequestWrapper {
 impl<B: BufStream> Extract<B> for RequestWrapper {
     type Future = Immediate<Self>;
 
-    fn extract(ctx: &Context) -> Self::Future {
+    fn extract(ctx: &Context<'_>) -> Self::Future {
         let mut request = Request::builder()
             .method(ctx.request().method())
             .version(ctx.request().version())

@@ -1,4 +1,4 @@
-use error::Error;
+use crate::error::Error;
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};

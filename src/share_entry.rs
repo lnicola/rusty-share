@@ -1,7 +1,7 @@
 use bytesize::ByteSize;
 use chrono::{DateTime, Local};
 use chrono_humanize::HumanTime;
-use error::Error;
+use crate::error::Error;
 use std::fs::DirEntry;
 #[cfg(not(target_os = "windows"))]
 use std::os::unix::ffi::OsStrExt;
