@@ -1,4 +1,6 @@
 use cookie::Cookie;
+use crate::response;
+use crate::share_entry::ShareEntry;
 use horrorshow::helper::doctype;
 use horrorshow::prelude::*;
 use horrorshow::{append_html, html};
@@ -7,8 +9,6 @@ use http::header::SET_COOKIE;
 use http::Response;
 use hyper::Body;
 use log::error;
-use crate::response;
-use crate::share_entry::ShareEntry;
 
 pub fn index(entries: &[ShareEntry]) -> Response<Body> {
     let page = html! {
