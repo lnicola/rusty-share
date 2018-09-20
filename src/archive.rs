@@ -52,7 +52,8 @@ impl Archive {
             .strip_prefix(&root)
             .map_err(|e| {
                 Error::from_strip_prefix(e, entry.path().to_path_buf(), root.to_path_buf())
-            })?.to_string_lossy()
+            })?
+            .to_string_lossy()
             .into_owned();
 
         let mut entry_len = 512;

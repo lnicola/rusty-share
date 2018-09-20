@@ -19,7 +19,6 @@ use crate::share_entry::ShareEntry;
 use diesel::r2d2::{self, ConnectionManager};
 use diesel::sqlite::SqliteConnection;
 use diesel::QueryResult;
-use futures;
 use futures::sync::mpsc;
 use futures::{future, Future, Stream};
 use hex;
@@ -101,23 +100,26 @@ fn handle_get(
 ) -> impl Future<Item = Response, Error = Error> {
     tokio::fs::metadata(path.clone())
         .then(|metadata| match metadata {
-            Ok(metadata) => if metadata.is_dir() {
-                if !uri_path.ends_with('/') {
-                    Either3::A(future::ok(response::found(&(uri_path + "/"))))
+            Ok(metadata) => {
+                if metadata.is_dir() {
+                    if !uri_path.ends_with('/') {
+                        Either3::A(future::ok(response::found(&(uri_path + "/"))))
+                    } else {
+                        Either3::B(
+                            BlockingFuture::new(move || render_index(&path))
+                                .map_err(|_| unreachable!()),
+                        )
+                    }
                 } else {
-                    Either3::B(
-                        BlockingFuture::new(move || render_index(&path))
-                            .map_err(|_| unreachable!()),
-                    )
+                    Either3::C(handle_get_file(path, req))
                 }
-            } else {
-                Either3::C(handle_get_file(path, req))
-            },
+            }
             Err(e) => {
                 error!("{}", Error::from_io(e, path.clone()));
                 Either3::A(future::ok(response::not_found()))
             }
-        }).map(|r| match r {
+        })
+        .map(|r| match r {
             Either3::A(r) | Either3::B(r) | Either3::C(r) => r,
         })
 }
@@ -149,7 +151,8 @@ fn handle_post(files: Files, path: PathBuf) -> impl Future<Item = Response, Erro
             .map(|s| {
                 let percent_decoded = Cow::from(percent_encoding::percent_decode(s.as_bytes()));
                 PathBuf::from(OsStr::from_bytes(percent_decoded.as_ref()))
-            }).collect::<Vec<_>>();
+            })
+            .collect::<Vec<_>>();
         if files.is_empty() {
             for entry in dir_entries(&path)? {
                 let path = entry.path();
@@ -413,12 +416,9 @@ fn run() -> Result<(), Error> {
 fn main() {
     pretty_env_logger::init();
 
-    tokio::run(futures::lazy(move || {
-        if let Err(e) = run() {
-            error!("{}", e);
-        }
-        Ok(())
-    }));
+    if let Err(e) = run() {
+        error!("{}", e);
+    }
 }
 
 fn dir_entries(path: &Path) -> Result<impl Iterator<Item = DirEntry>, Error> {
@@ -429,7 +429,8 @@ fn dir_entries(path: &Path) -> Result<impl Iterator<Item = DirEntry>, Error> {
                 error!("{}", e);
                 e
             }).ok()
-        }).filter(|file| !is_hidden(&file.file_name())))
+        })
+        .filter(|file| !is_hidden(&file.file_name())))
 }
 
 fn get_dir_entries(path: &Path) -> Result<Vec<ShareEntry>, Error> {
@@ -442,7 +443,8 @@ fn get_dir_entries(path: &Path) -> Result<Vec<ShareEntry>, Error> {
                 error!("{}", e);
                 None
             }
-        }).collect::<Vec<_>>();
+        })
+        .collect::<Vec<_>>();
 
     entries.par_sort_unstable_by(|e1, e2| (e2.is_dir(), e2.date()).cmp(&(e1.is_dir(), e1.date())));
 
@@ -497,7 +499,8 @@ pub fn authenticate(store: &Store, name: &str, password: &str) -> QueryResult<Op
                 .map(|_| user)
                 .map_err(|e| error!("Password verification failed for user {}: {}", name, e))
                 .ok()
-        }).map(|user| {
+        })
+        .map(|user| {
             let session_id = rand::thread_rng().gen::<[u8; 16]>();
             if let Err(e) = store.create_session(&session_id, user.id) {
                 error!("Error saving session for user id {}: {}", user.id, e);
