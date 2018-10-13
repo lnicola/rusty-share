@@ -20,7 +20,7 @@ document.addEventListener("DOMContentLoaded", function () {
     }
     let playlist = [];
     for (let i = 2; i < rows.length; i++) {
-        let anchor = rows[i].children[1].children[0];
+        let anchor = rows[i].children[1];
         let entry = {
             title: anchor.innerText,
             href: anchor.href
