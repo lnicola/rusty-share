@@ -2,12 +2,9 @@ use bytesize::ByteSize;
 use chrono::{DateTime, Local};
 use chrono_humanize::HumanTime;
 use crate::error::Error;
+use crate::os_str_ext::OsStrExt;
 use std::fs::DirEntry;
-#[cfg(not(target_os = "windows"))]
-use std::os::unix::ffi::OsStrExt;
 use url::percent_encoding;
-#[cfg(target_os = "windows")]
-use OsStrExt;
 
 #[derive(Debug)]
 pub struct ShareEntry {
