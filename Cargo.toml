@@ -31,7 +31,7 @@ tar = "0.4"
 time = "0.1"
 tokio = "0.1"
 tokio-threadpool = "0.1"
-tower-web = { git = "https://github.com/lnicola/tower-web/", branch = "decode-pathbuf" }
+tower-web = "0.3"
 url = "1.7"
 walkdir = "2.2"
 
