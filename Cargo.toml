@@ -7,16 +7,16 @@ edition = "2018"
 [dependencies]
 bytes = "0.4"
 bytesize = "1.0"
-chrono = "0.4"
+chrono = { version = "0.4", default-features = false }
 chrono-humanize = "0.0.11"
 cookie = "0.11"
 diesel = { version = "1.3", default-features = false, features = ["chrono", "r2d2", "sqlite"] }
-futures = "0.1"
+futures = { version = "0.1", default-features = false, features = ["use_std"] }
 hex = "0.3"
-horrorshow = "0.6"
+horrorshow = { version = "0.6", default-features = false }
 http = "0.1"
 http-serve = "0.1"
-hyper = "0.12"
+hyper = { version = "0.12", default-features = false, features = ["runtime"] }
 log = "0.4"
 mime_guess = "1.8"
 pretty_env_logger = "0.2"
@@ -27,7 +27,7 @@ serde = "1.0"
 serde_derive = "1.0"
 serde_urlencoded = "0.5"
 structopt = "0.2"
-tar = "0.4"
+tar = { version = "0.4", default-features = false }
 time = "0.1"
 tokio = "0.1"
 tokio-threadpool = "0.1"
