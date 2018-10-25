@@ -31,7 +31,7 @@ tar = "0.4"
 time = "0.1"
 tokio = "0.1"
 tokio-threadpool = "0.1"
-tower-web = "0.3"
+tower-web = { version = "0.3", default-features = false }
 url = "1.7"
 walkdir = "2.2"
 
