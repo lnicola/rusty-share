@@ -22,6 +22,7 @@ mime_guess = "1.8"
 pretty_env_logger = "0.2"
 rand = "0.5"
 rayon = "1.0"
+libsqlite3-sys = "0.9"
 scrypt = "0.2"
 serde = "1.0"
 serde_derive = "1.0"
@@ -34,6 +35,9 @@ tokio-threadpool = "0.1"
 tower-web = { version = "0.3", default-features = false }
 url = "1.7"
 walkdir = "2.2"
+
+[features]
+bundled-sqlite = ["libsqlite3-sys/bundled"]
 
 [profile.release]
 codegen-units = 1
