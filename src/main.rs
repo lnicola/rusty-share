@@ -36,7 +36,6 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
 use scrypt;
 use scrypt::ScryptParams;
-use std::alloc::System;
 use std::borrow::Cow;
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry, File};
@@ -63,9 +62,6 @@ mod pipe;
 mod request_wrapper;
 mod response;
 mod share_entry;
-
-#[global_allocator]
-static A: System = System;
 
 type Pool = r2d2::Pool<ConnectionManager<SqliteConnection>>;
 type Response = http::Response<Body>;
