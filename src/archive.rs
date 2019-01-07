@@ -1,5 +1,5 @@
 use crate::error::Error;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use tar::Builder;
@@ -46,7 +46,23 @@ impl Archive {
     }
 
     pub fn add_entry(&mut self, root: &Path, entry: DirEntry) -> Result<(), Error> {
-        let is_dir = entry.file_type().is_dir();
+        let is_symlink = entry.path_is_symlink();
+        let mut file_len = 0;
+        let mut is_dir = false;
+        if is_symlink {
+            let metadata = fs::metadata(entry.path())?;
+            if metadata.is_dir() {
+                is_dir = true;
+            } else {
+                file_len = metadata.len();
+            }
+        } else {
+            is_dir = entry.file_type().is_dir();
+            if !is_dir {
+                file_len = entry.metadata()?.len();
+            }
+        }
+
         let relative_path = entry
             .path()
             .strip_prefix(&root)
@@ -64,10 +80,7 @@ impl Archive {
                 entry_len += 512 - path_len % 512;
             }
         }
-        if !is_dir {
-            let metadata = entry.metadata()?;
-            entry_len += (metadata.len() + 511) / 512 * 512;
-        }
+        entry_len += (file_len + 511) / 512 * 512;
         self.size += entry_len;
 
         let entry = ArchiveEntry {
