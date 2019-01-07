@@ -1,8 +1,8 @@
+use crate::error::Error;
 use bytesize::ByteSize;
 use chrono::{DateTime, Local};
 use chrono_humanize::HumanTime;
-use crate::error::Error;
-use std::fs::DirEntry;
+use std::fs::{self, DirEntry};
 #[cfg(not(target_os = "windows"))]
 use std::os::unix::ffi::OsStrExt;
 use url::percent_encoding;
@@ -48,9 +48,11 @@ impl ShareEntry {
         let metadata = value
             .metadata()
             .map_err(|e| Error::from_io(e, value.path().to_path_buf()))?;
-        let is_dir = metadata.is_dir();
+        let file_type = metadata.file_type();
+        let is_dir =
+            file_type.is_dir() || file_type.is_symlink() && fs::metadata(value.path())?.is_dir();
         let mut name = value.file_name();
-        if metadata.is_dir() {
+        if is_dir {
             name.push("/");
         }
         let link =
