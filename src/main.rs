@@ -344,6 +344,9 @@ impl_web! {
             request: RequestWrapper,
         ) -> Result<Response, ()> {
             let request = request.into();
+            if !request.uri().path().ends_with('/') {
+                return Ok(response::found("/browse/"));
+            }
             match self.check_auth(cookie, &request) {
                 Ok(user) => {
                     info!("{} GET /browse/", user);
