@@ -2,7 +2,7 @@ use cookie::{Cookie, SameSite};
 use http::header::{
         HeaderValue, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE, LOCATION, SET_COOKIE,
 };
-use http::{Response, StatusCode};
+use http::{Response, StatusCode, Uri};
 use hyper::Body;
 use time::Duration;
 use url::percent_encoding;
@@ -33,7 +33,8 @@ pub fn login_ok(session_id: String, redirect: &str) -> Response<Body> {
                 .unwrap()
 }
 
-pub fn login_redirect(path: &str, destroy_session: bool) -> Response<Body> {
+pub fn login_redirect(path: &Uri, destroy_session: bool) -> Response<Body> {
+        let path = path.path_and_query().map(|p| p.as_str()).unwrap_or("/");
         let path = percent_encoding::percent_encode(
                 path.as_bytes(),
                 percent_encoding::DEFAULT_ENCODE_SET,

@@ -5,7 +5,6 @@ extern crate diesel;
 #[macro_use]
 extern crate tower_web;
 
-use cookie::Cookie;
 use crate::archive::Archive;
 use crate::blocking_future::{BlockingFuture, BlockingFutureTry};
 use crate::db::{Conn, Store};
@@ -15,15 +14,17 @@ use crate::options::{Command, Options};
 use crate::os_str_ext::OsStrExt;
 use crate::pipe::Pipe;
 use crate::request_wrapper::RequestWrapper;
+use crate::share::Share;
 use crate::share_entry::ShareEntry;
+use cookie::Cookie;
 use diesel::r2d2::{self, ConnectionManager};
 use diesel::sqlite::SqliteConnection;
 use diesel::QueryResult;
 use futures::sync::mpsc;
 use futures::{future, Future, Stream};
 use hex;
-use http;
 use http::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
+use http::{self, Request};
 use http_serve;
 use http_serve::ChunkedReadFile;
 use hyper::Body;
@@ -61,6 +62,7 @@ mod page;
 mod pipe;
 mod request_wrapper;
 mod response;
+mod share;
 mod share_entry;
 
 type Pool = r2d2::Pool<ConnectionManager<SqliteConnection>>;
@@ -86,7 +88,8 @@ fn handle_get_file(
         File::open(&path)
             .and_then(|file| ChunkedReadFile::new(file, None, headers))
             .map_err(|e| Error::from_io(e, path.to_path_buf()))
-    }).and_then(move |crf| future::ok(http_serve::serve(crf, &req)))
+    })
+    .and_then(move |crf| future::ok(http_serve::serve(crf, &req)))
 }
 
 fn handle_get(
@@ -131,7 +134,8 @@ fn get_archive(archive: Archive) -> Body {
             }
         }
         builder.finish()
-    }).map_err(|e| error!("{}", e));
+    })
+    .map_err(|e| error!("{}", e));
     tokio::spawn(f);
 
     let rx = rx.map_err(|_| Error::StreamCancelled);
@@ -207,11 +211,11 @@ struct Files(Vec<(String, String)>);
 
 impl_web! {
     impl RustyShare {
-        fn check_auth(&self, path: &Path, cookie: Option<String>) -> Result<String, Response> {
+        fn check_auth(&self, cookie: Option<String>, request: &Request<()>) -> Result<String, Response> {
             if let Some(ref pool) = self.pool {
                 let redirect = || {
                     response::login_redirect(
-                        &(String::from("/browse/") + path.to_string_lossy().as_ref()),
+                        request.uri(),
                         false,
                     )
                 };
@@ -241,9 +245,50 @@ impl_web! {
             }
         }
 
+        fn lookup_share(&self, name: &str) -> Result<PathBuf, Response> {
+            if let Some(ref pool) = self.pool {
+                let conn = pool.get().map_err(|e| {
+                    error!("{}", e);
+                    response::internal_server_error()
+                })?;
+                let store = Store::new(Conn::new(conn));
+                let path = store
+                    .lookup_share(name)
+                    .map_err(|e| {
+                        error!("{}", e);
+                        response::internal_server_error()
+                    })?.ok_or_else(response::not_found)?;
+                Ok(path)
+            } else {
+                Ok(self.root.clone())
+            }
+        }
+
+        fn get_shares(&self) -> Result<Vec<Share>, Response> {
+            if let Some(ref pool) = self.pool {
+                let conn = pool.get().map_err(|e| {
+                    error!("{}", e);
+                    response::internal_server_error()
+                })?;
+                let store = Store::new(Conn::new(conn));
+                let shares = store
+                    .get_share_names()
+                    .map_err(|e| {
+                        error!("{}", e);
+                        response::internal_server_error()
+                    })?
+                    .into_iter()
+                    .map(|share| Share::from(share))
+                    .collect::<Vec<_>>();
+                Ok(shares)
+            } else {
+                Ok(vec![Share::from(String::from("public"))])
+            }
+        }
+
         #[get("/")]
         fn index(&self) -> Result<Response, ()> {
-            Ok(response::found("/browse"))
+            Ok(response::found("/browse/"))
         }
 
         #[get("/favicon.ico")]
@@ -265,7 +310,7 @@ impl_web! {
             if let Some(ref pool) = self.pool {
                 let redirect = query_string
                     .redirect
-                    .unwrap_or_else(|| String::from("/browse"));
+                    .unwrap_or_else(|| String::from("/browse/"));
 
                 let store = match pool.get() {
                     Ok(conn) => Store::new(Conn::new(conn)),
@@ -292,59 +337,93 @@ impl_web! {
             }
         }
 
-        #[get("/browse")]
-        fn browse_fallback(
+        #[get("/browse/")]
+        fn browse_shares(
             &self,
             cookie: Option<String>,
             request: RequestWrapper,
-        ) -> Box<dyn Future<Item = Response, Error = Error> + Send + 'static> {
-            self.browse(PathBuf::new(), cookie, request)
+        ) -> Result<Response, ()> {
+            let request = request.into();
+            match self.check_auth(cookie, &request) {
+                Ok(user) => {
+                    info!("{} GET /browse/", user);
+                }
+                Err(response) => return Ok(response),
+            }
+            let shares = match self.get_shares() {
+                Ok(share) => share,
+                Err(response) => return Ok(response),
+            };
+            Ok(page::shares(&shares))
         }
 
-        #[get("/browse/*path")]
+        #[get("/browse/:share")]
+        fn browse_fallback(
+            &self,
+            share: String,
+            cookie: Option<String>,
+            request: RequestWrapper,
+        ) -> Box<dyn Future<Item = Response, Error = Error> + Send + 'static> {
+            self.browse(share, PathBuf::new(), cookie, request)
+        }
+
+        #[get("/browse/:share/*path")]
         fn browse(
             &self,
+            share: String,
             path: PathBuf,
             cookie: Option<String>,
             request: RequestWrapper,
         ) -> Box<dyn Future<Item = Response, Error = Error> + Send + 'static> {
-            match self.check_auth(&path, cookie) {
+            let request = request.into();
+            match self.check_auth(cookie, &request) {
                 Ok(user) => {
-                    info!("{} GET /browse/{}", user, path.display());
+                    info!("{} GET /browse/{}/{}", user, share, path.display());
                 }
                 Err(response) => return Box::new(future::ok(response)),
             }
-
-            let disk_path = self.root.as_path().join(&path);
-            let request = request.into();
+            let share = match self.lookup_share(&share) {
+                Ok(share) => share,
+                Err(response) => return Box::new(future::ok(response)),
+            };
+            let disk_path = share.join(&path);
             let uri_path = request.uri().path().to_string();
             Box::new(handle_get(disk_path, uri_path, request))
         }
 
-        #[post("/browse")]
+        #[post("/browse/:share")]
         fn archive_fallback(
             &self,
+            share: String,
             body: Files,
             cookie: Option<String>,
+            request: RequestWrapper,
         ) -> Box<dyn Future<Item = Response, Error = Error> + Send + 'static> {
-            self.archive(PathBuf::new(), body, cookie)
+            self.archive(share, PathBuf::new(), body, cookie, request)
         }
 
-        #[post("/browse/*path")]
+        #[post("/browse/:share/*path")]
         fn archive(
             &self,
+            share: String,
             path: PathBuf,
             body: Files,
             cookie: Option<String>,
+            request: RequestWrapper,
         ) -> Box<dyn Future<Item = Response, Error = Error> + Send + 'static> {
-            match self.check_auth(&path, cookie) {
+            let request = request.into();
+            match self.check_auth(cookie, &request) {
                 Ok(user) => {
-                    info!("{} POST /browse/{}", user, path.display());
+                    info!("{} POST /browse/{}/{}", user, share, path.display());
                 }
                 Err(response) => return Box::new(future::ok(response)),
             }
+            let share = match self.lookup_share(&share) {
+                Ok(share) => share,
+                Err(response) => return Box::new(future::ok(response)),
+            };
 
-            let disk_path = self.root.as_path().join(&path);
+            let disk_path = share.join(&path);
             Box::new(handle_post(body, disk_path))
         }
     }
@@ -424,7 +503,8 @@ fn dir_entries(path: &Path) -> Result<impl Iterator<Item = DirEntry>, Error> {
             file.map_err(|e| {
                 error!("{}", e);
                 e
-            }).ok()
+            })
+            .ok()
         })
         .filter(|file| !is_hidden(&file.file_name())))
 }

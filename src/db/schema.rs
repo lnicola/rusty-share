@@ -15,4 +15,12 @@ table! {
     }
 }
 
+table! {
+    shares (id) {
+        id -> Integer,
+        name -> Text,
+        path -> Text,
+    }
+}
+
 allow_tables_to_appear_in_same_query!(sessions, users,);

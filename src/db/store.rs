@@ -1,11 +1,12 @@
 use super::models::User;
-use super::schema::{sessions, users};
+use super::schema::{sessions, shares, users};
 use super::Conn;
 use diesel::result::Error;
 use diesel::{
     self, Connection, ExpressionMethods, OptionalExtension, QueryDsl, QueryResult, RunQueryDsl,
     SqliteConnection,
 };
+use std::path::PathBuf;
 
 pub struct Store(Conn);
 
@@ -17,6 +18,7 @@ impl Store {
     pub fn initialize_database(&self) -> QueryResult<()> {
         diesel::sql_query(include_str!("../../db/users.sql")).execute(self.connection())?;
         diesel::sql_query(include_str!("../../db/sessions.sql")).execute(self.connection())?;
+        diesel::sql_query(include_str!("../../db/shares.sql")).execute(self.connection())?;
         Ok(())
     }
 
@@ -70,6 +72,21 @@ impl Store {
         } else {
             Ok(None)
         }
+    }
+
+    pub fn lookup_share(&self, name: &str) -> QueryResult<Option<PathBuf>> {
+        shares::table
+            .filter(shares::name.eq(name))
+            .select(shares::path)
+            .first::<String>(self.connection())
+            .map(PathBuf::from)
+            .optional()
+    }
+
+    pub fn get_share_names(&self) -> QueryResult<Vec<String>> {
+        shares::table
+            .select(shares::name)
+            .load::<String>(self.connection())
     }
 
     pub fn transaction<T, E, F>(&self, f: F) -> Result<T, E>

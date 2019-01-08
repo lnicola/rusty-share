@@ -1,6 +1,7 @@
-use cookie::Cookie;
 use crate::response;
+use crate::share::Share;
 use crate::share_entry::ShareEntry;
+use cookie::Cookie;
 use horrorshow::helper::doctype;
 use horrorshow::prelude::*;
 use horrorshow::{append_html, html};
@@ -56,6 +57,37 @@ pub fn index(entries: &[ShareEntry]) -> Response<Body> {
                     }
                 }
                 script { : Raw(include_str!("../assets/player.js")) }
+            }
+        }
+    };
+    match page.into_string() {
+        Ok(page) => response::page(page),
+        Err(e) => {
+            error!("{}", e);
+            response::internal_server_error()
+        }
+    }
+}
+
+pub fn shares(shares: &[Share]) -> Response<Body> {
+    let page = html! {
+        : doctype::HTML;
+        html {
+            head {
+                meta(name="viewport", content="width=device-width, initial-scale=1");
+                style { : Raw(include_str!("../assets/style.css")); }
+            }
+            body {
+                div(class="view") {
+                    div(class="entry header") {
+                        div { : Raw("Name") }
+                    }
+                    @ for share in shares {
+                        div(class="entry") {
+                            a(href=share.link()) { : share.name() }
+                        }
+                    }
+                }
             }
         }
     };
