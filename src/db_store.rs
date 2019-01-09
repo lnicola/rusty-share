@@ -23,8 +23,7 @@ impl<B: BufStream> Extract<B> for DbStore {
         };
         let store = store.map_err(|e| {
             error!("{}", e);
-            // TODO
-            tower_web::extract::Error::missing_argument()
+            tower_web::extract::Error::web(tower_web::error::ErrorKind::internal().into())
         });
         Immediate::result(store)
     }
