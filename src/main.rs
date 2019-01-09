@@ -6,8 +6,10 @@ extern crate diesel;
 extern crate tower_web;
 
 use crate::archive::Archive;
+use crate::authentication::Authentication;
 use crate::blocking_future::{BlockingFuture, BlockingFutureTry};
 use crate::db::{Conn, Store};
+use crate::db_store::DbStore;
 use crate::duration_ext::DurationExt;
 use crate::error::Error;
 use crate::options::{Command, Options};
@@ -16,7 +18,6 @@ use crate::pipe::Pipe;
 use crate::request_wrapper::RequestWrapper;
 use crate::share::Share;
 use crate::share_entry::ShareEntry;
-use cookie::Cookie;
 use diesel::r2d2::{self, ConnectionManager};
 use diesel::sqlite::SqliteConnection;
 use diesel::QueryResult;
@@ -24,7 +25,7 @@ use futures::sync::mpsc;
 use futures::{future, Future, Stream};
 use hex;
 use http::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
-use http::{self, Request};
+use http::Request;
 use http_serve;
 use http_serve::ChunkedReadFile;
 use hyper::Body;
@@ -52,8 +53,10 @@ use url::percent_encoding;
 use walkdir::WalkDir;
 
 mod archive;
+mod authentication;
 mod blocking_future;
 mod db;
+mod db_store;
 mod duration_ext;
 mod error;
 mod options;
@@ -68,9 +71,13 @@ mod share_entry;
 type Pool = r2d2::Pool<ConnectionManager<SqliteConnection>>;
 type Response = http::Response<Body>;
 
+struct Config {
+    pool: Option<Pool>,
+}
+
 struct RustyShare {
     root: PathBuf,
-    pool: Option<Pool>,
+    has_db: bool,
 }
 
 fn handle_get_file(
@@ -95,7 +102,7 @@ fn handle_get_file(
 fn handle_get(
     path: PathBuf,
     uri_path: String,
-    req: http::Request<()>,
+    req: Request<()>,
 ) -> impl Future<Item = Response, Error = Error> {
     tokio::fs::metadata(path.clone())
         .then(|metadata| match metadata {
@@ -211,47 +218,8 @@ struct Files(Vec<(String, String)>);
 
 impl_web! {
     impl RustyShare {
-        fn check_auth(&self, cookie: Option<String>, request: &Request<()>) -> Result<String, Response> {
-            if let Some(ref pool) = self.pool {
-                let redirect = || {
-                    response::login_redirect(
-                        request.uri(),
-                        false,
-                    )
-                };
-                let cookie = cookie.ok_or_else(redirect)?;
-                let session_id = Cookie::parse(cookie).map_err(|e| {
-                    error!("{}", e);
-                    response::bad_request()
-                })?;
-                let session_id = hex::decode(session_id.value()).map_err(|e| {
-                    error!("{}", e);
-                    redirect()
-                })?;
-                let conn = pool.get().map_err(|e| {
-                    error!("{}", e);
-                    response::internal_server_error()
-                })?;
-                let store = Store::new(Conn::new(conn));
-                let (_, user) = store
-                    .lookup_session(&session_id)
-                    .map_err(|e| {
-                        error!("{}", e);
-                        response::internal_server_error()
-                    })?.ok_or_else(redirect)?;
-                Ok(user)
-            } else {
-                Ok(String::new())
-            }
-        }
-
-        fn lookup_share(&self, name: &str) -> Result<PathBuf, Response> {
-            if let Some(ref pool) = self.pool {
-                let conn = pool.get().map_err(|e| {
-                    error!("{}", e);
-                    response::internal_server_error()
-                })?;
-                let store = Store::new(Conn::new(conn));
+        fn lookup_share(&self, store: &DbStore, name: &str) -> Result<PathBuf, Response> {
+            if let Some(ref store) = store.0 {
                 let path = store
                     .lookup_share(name)
                     .map_err(|e| {
@@ -259,18 +227,15 @@ impl_web! {
                         response::internal_server_error()
                     })?.ok_or_else(response::not_found)?;
                 Ok(path)
-            } else {
+            } else if name == "public" {
                 Ok(self.root.clone())
+            } else {
+                Err(response::not_found())
             }
         }
 
-        fn get_shares(&self) -> Result<Vec<Share>, Response> {
-            if let Some(ref pool) = self.pool {
-                let conn = pool.get().map_err(|e| {
-                    error!("{}", e);
-                    response::internal_server_error()
-                })?;
-                let store = Store::new(Conn::new(conn));
+        fn get_shares(&self, store: &DbStore) -> Result<Vec<Share>, Response> {
+            if let Some(ref store) = store.0 {
                 let shares = store
                     .get_share_names()
                     .map_err(|e| {
@@ -278,11 +243,11 @@ impl_web! {
                         response::internal_server_error()
                     })?
                     .into_iter()
-                    .map(|share| Share::from(share))
+                    .map(Share::new)
                     .collect::<Vec<_>>();
                 Ok(shares)
             } else {
-                Ok(vec![Share::from(String::from("public"))])
+                Ok(vec![Share::new(String::from("public"))])
             }
         }
 
@@ -298,7 +263,7 @@ impl_web! {
 
         #[get("/login")]
         fn login_page(&self) -> Result<Response, ()> {
-            if self.pool.is_some() {
+            if self.has_db {
                 Ok(page::login(None))
             } else {
                 Ok(response::not_found())
@@ -306,19 +271,11 @@ impl_web! {
         }
 
         #[post("/login")]
-        fn login_action(&self, query_string: LoginQuery, body: LoginForm) -> Result<Response, ()> {
-            if let Some(ref pool) = self.pool {
+        fn login_action(&self, store: DbStore, query_string: LoginQuery, body: LoginForm) -> Result<Response, ()> {
+            if let Some(ref store) = store.0 {
                 let redirect = query_string
                     .redirect
                     .unwrap_or_else(|| String::from("/browse/"));
-
-                let store = match pool.get() {
-                    Ok(conn) => Store::new(Conn::new(conn)),
-                    Err(e) => {
-                        error!("{}", e);
-                        return Ok(response::internal_server_error());
-                    }
-                };
 
                 let session = authenticate(&store, &body.user, &body.pass).unwrap();
                 let response = if let Some(session_id) = session {
@@ -340,20 +297,16 @@ impl_web! {
         #[get("/browse/")]
         fn browse_shares(
             &self,
-            cookie: Option<String>,
-            request: RequestWrapper,
+            store: DbStore,
+            authentication: Authentication,
         ) -> Result<Response, ()> {
-            let request = request.into();
-            if !request.uri().path().ends_with('/') {
-                return Ok(response::found("/browse/"));
-            }
-            match self.check_auth(cookie, &request) {
-                Ok(user) => {
+            match authentication {
+                Authentication::User(user) => {
                     info!("{} GET /browse/", user);
                 }
-                Err(response) => return Ok(response),
+                Authentication::Error(response) => return Ok(response),
             }
-            let shares = match self.get_shares() {
+            let shares = match self.get_shares(&store) {
                 Ok(share) => share,
                 Err(response) => return Ok(response),
             };
@@ -364,10 +317,11 @@ impl_web! {
         fn browse_fallback(
             &self,
             share: String,
-            cookie: Option<String>,
+            store: DbStore,
             request: RequestWrapper,
+            authentication: Authentication,
         ) -> Box<dyn Future<Item = Response, Error = Error> + Send + 'static> {
-            self.browse(share, PathBuf::new(), cookie, request)
+            self.browse(share, PathBuf::new(), store, request, authentication)
         }
 
         #[get("/browse/:share/*path")]
@@ -375,17 +329,18 @@ impl_web! {
             &self,
             share: String,
             path: PathBuf,
-            cookie: Option<String>,
+            store: DbStore,
             request: RequestWrapper,
+            authentication: Authentication,
         ) -> Box<dyn Future<Item = Response, Error = Error> + Send + 'static> {
             let request = request.into();
-            match self.check_auth(cookie, &request) {
-                Ok(user) => {
+            match authentication {
+                Authentication::User(user) => {
                     info!("{} GET /browse/{}/{}", user, share, path.display());
                 }
-                Err(response) => return Box::new(future::ok(response)),
+                Authentication::Error(response) => return Box::new(future::ok(response)),
             }
-            let share = match self.lookup_share(&share) {
+            let share = match self.lookup_share(&store, &share) {
                 Ok(share) => share,
                 Err(response) => return Box::new(future::ok(response)),
             };
@@ -399,10 +354,10 @@ impl_web! {
             &self,
             share: String,
             body: Files,
-            cookie: Option<String>,
-            request: RequestWrapper,
+            store: DbStore,
+            authentication: Authentication,
         ) -> Box<dyn Future<Item = Response, Error = Error> + Send + 'static> {
-            self.archive(share, PathBuf::new(), body, cookie, request)
+            self.archive(share, PathBuf::new(), body, store, authentication)
         }
 
         #[post("/browse/:share/*path")]
@@ -411,17 +366,16 @@ impl_web! {
             share: String,
             path: PathBuf,
             body: Files,
-            cookie: Option<String>,
-            request: RequestWrapper,
+            store: DbStore,
+            authentication: Authentication,
         ) -> Box<dyn Future<Item = Response, Error = Error> + Send + 'static> {
-            let request = request.into();
-            match self.check_auth(cookie, &request) {
-                Ok(user) => {
+            match authentication {
+                Authentication::User(user) => {
                     info!("{} POST /browse/{}/{}", user, share, path.display());
                 }
-                Err(response) => return Box::new(future::ok(response)),
+                Authentication::Error(response) => return Box::new(future::ok(response)),
             }
-            let share = match self.lookup_share(&share) {
+            let share = match self.lookup_share(&store, &share) {
                 Ok(share) => share,
                 Err(response) => return Box::new(future::ok(response)),
             };
@@ -473,15 +427,18 @@ fn run() -> Result<(), Error> {
     );
     println!("Listening on http://{}", addr);
 
+    let has_db = pool.is_some();
+    let config = Config { pool };
+
     let rusty_share = RustyShare {
         root: options.root,
-        pool,
+        has_db,
     };
 
     ServiceBuilder::new()
+        .config(config)
         .resource(rusty_share)
-        .run(&addr)
-        .unwrap();
+        .run(&addr)?;
 
     // let server = Server::from_tcp(listener)?
     //     .tcp_nodelay(true)
