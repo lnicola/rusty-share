@@ -104,7 +104,7 @@ fn handle_get(
     uri_path: String,
     req: Request<()>,
 ) -> impl Future<Item = Response, Error = Error> {
-    tokio::fs::metadata(path.clone())
+    tokio_fs::metadata(path.clone())
         .then(|metadata| match metadata {
             Ok(metadata) => {
                 if metadata.is_dir() {
