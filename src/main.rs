@@ -184,7 +184,8 @@ fn handle_post(files: Files, path: PathBuf) -> impl Future<Item = Response, Erro
                 }
             }
 
-            let archive_name = get_archive_name(&path, &files);
+            let single_dir = files.len() == 1 && fs::metadata(path.join(&files[0]))?.is_dir();
+            let archive_name = get_archive_name(&path, &files, single_dir);
             let archive_size = archive.size();
             let body = get_archive(archive);
             response::archive(archive_size, body, &archive_name)
@@ -193,12 +194,26 @@ fn handle_post(files: Files, path: PathBuf) -> impl Future<Item = Response, Erro
     })
 }
 
-fn get_archive_name(path_: &Path, files: &[PathBuf]) -> String {
-    let file = if files.len() == 1 { &files[0] } else { path_ };
-    file.with_extension("tar")
-        .file_name()
-        .map(|f| f.to_string_lossy().into_owned())
-        .unwrap_or_else(|| String::from("archive.tar"))
+fn get_archive_name(path_: &Path, files: &[PathBuf], single_dir: bool) -> String {
+    if files.len() == 1 {
+        if single_dir {
+            files[0]
+                .file_name()
+                .map(|f| f.to_string_lossy().into_owned() + ".tar")
+                .unwrap_or_else(|| String::from("archive.tar"))
+        } else {
+            files[0]
+                .with_extension("tar")
+                .file_name()
+                .map(|f| f.to_string_lossy().into_owned())
+                .unwrap_or_else(|| String::from("archive.tar"))
+        }
+    } else {
+        path_
+            .file_name()
+            .map(|f| f.to_string_lossy().into_owned() + ".tar")
+            .unwrap_or_else(|| String::from("archive.tar"))
+    }
 }
 
 #[derive(Debug, Extract)]
