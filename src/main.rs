@@ -406,15 +406,17 @@ fn run() -> Result<(), Error> {
 
     let mut pool = None;
     if let Some(ref db) = options.db {
+        let should_initialize = !Path::new(&db).exists();
+
         let manager = ConnectionManager::<SqliteConnection>::new(db.clone());
         let pool_ = Pool::builder().build(manager).expect("db pool");
 
-        let should_initialize = !Path::new(&db).exists();
         let conn = Conn::new(pool_.get().unwrap());
         let store = Store::new(conn);
         pool = Some(pool_);
 
         if should_initialize {
+            info!("Initializing database");
             store
                 .initialize_database()
                 .expect("unable to create database");
