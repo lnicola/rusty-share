@@ -15,25 +15,25 @@ pub enum Authentication {
 }
 
 fn check_session(store: &DbStore, context: &Context) -> Result<String, Response> {
-    let redirect = || response::login_redirect(context.request().uri(), false);
-    let cookie = context
-        .request()
-        .headers()
-        .get(COOKIE)
-        .ok_or_else(redirect)?;
-    let cookie = cookie.to_str().map_err(|e| {
-        error!("{}", e);
-        redirect()
-    })?;
-    let session_id = Cookie::parse(cookie).map_err(|e| {
-        error!("{}", e);
-        response::bad_request()
-    })?;
-    let session_id = hex::decode(session_id.value()).map_err(|e| {
-        error!("{}", e);
-        redirect()
-    })?;
     let user = if let Some(ref store) = store.0 {
+        let redirect = || response::login_redirect(context.request().uri(), false);
+        let cookie = context
+            .request()
+            .headers()
+            .get(COOKIE)
+            .ok_or_else(redirect)?;
+        let cookie = cookie.to_str().map_err(|e| {
+            error!("{}", e);
+            redirect()
+        })?;
+        let session_id = Cookie::parse(cookie).map_err(|e| {
+            error!("{}", e);
+            response::bad_request()
+        })?;
+        let session_id = hex::decode(session_id.value()).map_err(|e| {
+            error!("{}", e);
+            redirect()
+        })?;
         let (_, user) = store
             .lookup_session(&session_id)
             .map_err(|e| {
