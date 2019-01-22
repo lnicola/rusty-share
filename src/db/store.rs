@@ -89,6 +89,13 @@ impl Store {
             .load::<String>(self.connection())
     }
 
+    pub fn create_share(&self, name: &str, path: &str) -> QueryResult<i32> {
+        diesel::insert_into(shares::table)
+            .values((shares::name.eq(name), shares::path.eq(path)))
+            .execute(self.connection())?;
+        super::last_inserted_row_id(self.connection())
+    }
+
     pub fn transaction<T, E, F>(&self, f: F) -> Result<T, E>
     where
         F: FnOnce() -> Result<T, E>,

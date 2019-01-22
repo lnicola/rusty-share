@@ -7,6 +7,8 @@ pub enum Command {
     Register { user: String, pass: String },
     #[structopt(name = "reset-password", about = "Resets a user password")]
     ResetPassword { user: String, pass: String },
+    #[structopt(name = "create-share", about = "Creates a new share")]
+    CreateShare { name: String, path: String },
 }
 
 #[derive(Debug, StructOpt)]
@@ -22,11 +24,17 @@ pub struct Options {
     #[structopt(long = "db", help = "The database path.")]
     pub db: Option<String>,
     #[structopt(
-        short = "l", long = "listen", help = "The address to bind to.", default_value = "127.0.0.1"
+        short = "l",
+        long = "listen",
+        help = "The address to bind to.",
+        default_value = "127.0.0.1"
     )]
     pub address: String,
     #[structopt(
-        short = "p", long = "port", help = "The port to listen on.", default_value = "8080"
+        short = "p",
+        long = "port",
+        help = "The port to listen on.",
+        default_value = "8080"
     )]
     pub port: u16,
     #[structopt(subcommand)]

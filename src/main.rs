@@ -429,6 +429,10 @@ fn run() -> Result<(), Error> {
                 reset_password(&store, &user, &pass)?;
                 return Ok(());
             }
+            Some(Command::CreateShare { ref name, ref path }) => {
+                create_share(&store, &name, &path)?;
+                return Ok(());
+            }
             None => {}
         }
     }
@@ -539,6 +543,11 @@ pub fn reset_password(store: &Store, name: &str, password: &str) -> Result<(), E
     let params = ScryptParams::new(15, 8, 1).expect("recommended scrypt params should work");
     let hash = scrypt::scrypt_simple(password, &params)?;
     store.update_password_by_name(name, &hash)?;
+    Ok(())
+}
+
+pub fn create_share(store: &Store, name: &str, path: &str) -> Result<(), Error> {
+    store.create_share(name, &path)?;
     Ok(())
 }
 
