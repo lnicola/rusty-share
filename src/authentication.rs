@@ -1,9 +1,8 @@
 use crate::db_store::DbStore;
 use crate::response;
 use crate::Response;
-use cookie::Cookie;
 use futures::Async;
-use http::header::COOKIE;
+use headers::{Cookie, HeaderMapExt};
 use log::error;
 use tower_web::extract::ExtractFuture;
 use tower_web::extract::{Context, Extract, Immediate};
@@ -20,17 +19,10 @@ fn check_session(store: &DbStore, context: &Context) -> Result<String, Response>
         let cookie = context
             .request()
             .headers()
-            .get(COOKIE)
+            .typed_get::<Cookie>()
             .ok_or_else(redirect)?;
-        let cookie = cookie.to_str().map_err(|e| {
-            error!("{}", e);
-            redirect()
-        })?;
-        let session_id = Cookie::parse(cookie).map_err(|e| {
-            error!("{}", e);
-            response::bad_request()
-        })?;
-        let session_id = hex::decode(session_id.value()).map_err(|e| {
+        let session_id = cookie.get("sid").ok_or_else(|| redirect())?;
+        let session_id = hex::decode(session_id).map_err(|e| {
             error!("{}", e);
             redirect()
         })?;
