@@ -1,7 +1,7 @@
 use bytes::{Bytes, BytesMut};
 use futures::sink::{Sink, Wait};
-use futures::sync::mpsc::Sender;
 use std::io::{Error, ErrorKind, Result, Write};
+use tokio_sync::mpsc::Sender;
 
 pub struct Pipe {
     dest: Wait<Sender<Bytes>>,

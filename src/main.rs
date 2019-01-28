@@ -21,7 +21,6 @@ use crate::share_entry::ShareEntry;
 use diesel::r2d2::{self, ConnectionManager};
 use diesel::sqlite::SqliteConnection;
 use diesel::QueryResult;
-use futures::sync::mpsc;
 use futures::{future, Future, Stream};
 use hex;
 use http::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
@@ -47,6 +46,7 @@ use std::time::Instant;
 use structopt::StructOpt;
 use tar::Builder;
 use tokio;
+use tokio_sync::mpsc;
 use tower_web::util::tuple::Either3;
 use tower_web::ServiceBuilder;
 use url::percent_encoding;
@@ -131,7 +131,7 @@ fn handle_get(
 }
 
 fn get_archive(archive: Archive) -> Body {
-    let (tx, rx) = mpsc::channel(0);
+    let (tx, rx) = mpsc::channel(1);
     let pipe = Pipe::new(tx);
     let mut builder = Builder::new(pipe);
     let f = BlockingFutureTry::new(move || {
