@@ -43,4 +43,5 @@ bundled-sqlite = ["libsqlite3-sys/bundled"]
 
 [profile.release]
 codegen-units = 1
+incremental = false
 lto = true
