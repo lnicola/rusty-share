@@ -1,8 +1,10 @@
 use crate::db::{Conn, Store};
 use crate::Config;
+use http::StatusCode;
 use log::error;
 use tower_web::extract::{Context, Extract, Immediate};
 use tower_web::util::BufStream;
+use tower_web::Error;
 
 pub struct DbStore(pub Option<Store>);
 
@@ -23,7 +25,7 @@ impl<B: BufStream> Extract<B> for DbStore {
         };
         let store = store.map_err(|e| {
             error!("{}", e);
-            tower_web::extract::Error::web(tower_web::error::ErrorKind::internal().into())
+            Error::from(StatusCode::INTERNAL_SERVER_ERROR).into()
         });
         Immediate::result(store)
     }
