@@ -4,7 +4,7 @@ use crate::share_entry::ShareEntry;
 use cookie::Cookie;
 use horrorshow::helper::doctype;
 use horrorshow::prelude::*;
-use horrorshow::{append_html, html};
+use horrorshow::html;
 use http::header::HeaderValue;
 use http::header::SET_COOKIE;
 use http::Response;
