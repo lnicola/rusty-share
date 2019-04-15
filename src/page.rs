@@ -3,8 +3,8 @@ use crate::share::Share;
 use crate::share_entry::ShareEntry;
 use cookie::Cookie;
 use horrorshow::helper::doctype;
-use horrorshow::prelude::*;
 use horrorshow::html;
+use horrorshow::prelude::*;
 use http::header::HeaderValue;
 use http::header::SET_COOKIE;
 use http::Response;
@@ -79,11 +79,11 @@ pub fn shares(shares: &[Share]) -> Response<Body> {
             }
             body {
                 div(class="view") {
-                    div(class="entry header") {
+                    div(class="entry header share") {
                         div { : Raw("Name") }
                     }
                     @ for share in shares {
-                        div(class="entry") {
+                        div(class="entry share") {
                             a(href=share.link()) { : share.name() }
                         }
                     }

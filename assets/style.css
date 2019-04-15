@@ -75,10 +75,10 @@ body {
     border-width: 0 1px 1px;
     display: grid;
     grid-template-columns: 3rem 6rem 10rem auto;
-    grid-template-areas: "selected name name name" "selected size date .";
+    grid-template-areas: "selected name name name""selected size date .";
 }
 
-.entry>*{
+.entry>* {
     padding: 0.8rem;
 }
 
@@ -97,23 +97,27 @@ body {
     white-space: nowrap;
 }
 
-.entry> :nth-child(1) {
+.entry:not(.share)> :nth-child(1) {
     justify-self: center;
     grid-area: selected;
 }
 
-.entry> :nth-child(2) {
+.entry:not(.share)> :nth-child(2) {
     grid-area: name;
 }
 
-.entry> :nth-child(3) {
+.entry:not(.share)> :nth-child(3) {
     grid-area: size;
     text-align: left;
 }
 
-.entry> :nth-child(4) {
+.entry:not(.share)> :nth-child(4) {
     grid-area: date;
     text-align: left;
+}
+
+.entry.share :nth-child(1) {
+    grid-area: name;
 }
 
 @media only screen and (min-width: 600px) {
@@ -121,9 +125,11 @@ body {
         grid-template-columns: 3rem auto 6rem 10rem;
         grid-template-areas: "selected name size date";
     }
+
     .entry> :nth-child(3) {
         text-align: right;
     }
+
     .entry> :nth-child(4) {
         text-align: right;
     }
