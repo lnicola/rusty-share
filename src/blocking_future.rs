@@ -1,4 +1,5 @@
 use futures::{Async, Future, Poll};
+use std::convert::Infallible;
 use std::result::Result;
 use tokio_threadpool;
 
@@ -23,7 +24,7 @@ where
     F: FnOnce() -> T,
 {
     type Item = T;
-    type Error = ();
+    type Error = Infallible;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         let f = || (self.f.take().expect("future already completed"))();
