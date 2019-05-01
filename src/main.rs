@@ -15,7 +15,6 @@ use crate::error::Error;
 use crate::options::{Command, Options};
 use crate::os_str_ext::OsStrExt;
 use crate::pipe::Pipe;
-use crate::request_wrapper::RequestWrapper;
 use crate::share::Share;
 use crate::share_entry::ShareEntry;
 use diesel::r2d2::{self, ConnectionManager};
@@ -63,7 +62,6 @@ mod options;
 mod os_str_ext;
 mod page;
 mod pipe;
-mod request_wrapper;
 mod response;
 mod share;
 mod share_entry;
@@ -333,7 +331,7 @@ impl_web! {
             &self,
             share: String,
             store: DbStore,
-            request: RequestWrapper,
+            request: Request<()>,
             authentication: Authentication,
         ) -> Box<dyn Future<Item = Response, Error = Error> + Send + 'static> {
             self.browse(share, PathBuf::new(), store, request, authentication)
@@ -345,10 +343,9 @@ impl_web! {
             share: String,
             path: PathBuf,
             store: DbStore,
-            request: RequestWrapper,
+            request: Request<()>,
             authentication: Authentication,
         ) -> Box<dyn Future<Item = Response, Error = Error> + Send + 'static> {
-            let request = request.into();
             match authentication {
                 Authentication::User(user) => {
                     info!("{} GET /browse/{}/{}", user, share, path.display());

@@ -35,7 +35,7 @@ tokio = "0.1"
 tokio-fs = "0.1"
 tokio-sync = "0.1"
 tokio-threadpool = "0.1"
-tower-web = { version = "0.3", default-features = false }
+tower-web = { version = "0.3", git = "https://github.com/carllerche/tower-web.git", default-features = false }
 url = "1.7"
 walkdir = "2.2"
 
