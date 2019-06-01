@@ -9,8 +9,8 @@ bytes = "0.4"
 bytesize = "1.0"
 chrono = { version = "0.4", default-features = false }
 chrono-humanize = "0.0.11"
-cookie = "0.11"
-diesel = { version = "1.3", default-features = false, features = ["chrono", "r2d2", "sqlite"] }
+cookie = "0.12"
+diesel = { version = "1.4", default-features = false, features = ["chrono", "r2d2", "sqlite"] }
 futures = { version = "0.1", default-features = false, features = ["use_std"] }
 headers = "0.2"
 hex = "0.3"
@@ -22,11 +22,10 @@ log = "0.4"
 mime_guess = "1.8"
 pretty_env_logger = "0.3"
 rand = "0.6"
-rayon = "1.0"
+rayon = "1.1"
 libsqlite3-sys = "0.12"
 scrypt = "0.2"
-serde = "1.0"
-serde_derive = "1.0"
+serde = { version = "1.0", features = ["derive"] }
 serde_urlencoded = "0.5"
 structopt = "0.2"
 tar = { version = "0.4", default-features = false }
