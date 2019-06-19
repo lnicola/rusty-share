@@ -3,22 +3,16 @@
 #[macro_use]
 extern crate diesel;
 
-use crate::archive::Archive;
-use crate::authentication::Authentication;
-use crate::blocking_future::{BlockingFuture, BlockingFutureTry};
-use crate::db::{Conn, Store};
-use crate::db_store::DbStore;
-use crate::duration_ext::DurationExt;
-use crate::error::Error;
-use crate::options::{Command, Options};
-use crate::os_str_ext::OsStrExt;
-use crate::pipe::Pipe;
-use crate::share::Share;
-use crate::share_entry::ShareEntry;
+use archive::Archive;
+use authentication::Authentication;
+use blocking_future::{BlockingFuture, BlockingFutureTry};
+use db::{Conn, Store};
+use db_store::DbStore;
 use diesel::r2d2::{self, ConnectionManager};
 use diesel::sqlite::SqliteConnection;
 use diesel::QueryResult;
 use either::{Either2, Either3, Either6};
+use error::Error;
 use futures::{future, Future, Stream};
 use headers::{Cookie, HeaderMapExt};
 use hex;
@@ -31,6 +25,9 @@ use hyper::service::service_fn;
 use hyper::{Body, Server};
 use log::{error, info};
 use mime_guess;
+use options::{Command, Options};
+use os_str_ext::OsStrExt;
+use pipe::Pipe;
 use pretty_env_logger;
 use rand;
 use rand::Rng;
@@ -38,6 +35,8 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
 use scrypt;
 use scrypt::ScryptParams;
+use share::Share;
+use share_entry::ShareEntry;
 use std::borrow::Cow;
 use std::ffi::OsStr;
 use std::ffi::OsString;
@@ -59,7 +58,6 @@ mod authentication;
 mod blocking_future;
 mod db;
 mod db_store;
-mod duration_ext;
 mod either;
 mod error;
 mod options;
@@ -679,8 +677,8 @@ fn render_index(path: &Path) -> Response {
             let render_time = Instant::now() - render_start;
             info!(
                 "enumerate: {} ms, render: {} ms",
-                enumerate_time.to_millis(),
-                render_time.to_millis()
+                enumerate_time.as_millis(),
+                render_time.as_millis()
             );
             rendered
         }
