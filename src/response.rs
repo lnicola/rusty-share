@@ -81,6 +81,13 @@ pub fn found(location: &str) -> Response<Body> {
         .unwrap()
 }
 
+pub fn bad_request() -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::BAD_REQUEST)
+        .body(Body::empty())
+        .unwrap()
+}
+
 pub fn not_found() -> Response<Body> {
     Response::builder()
         .status(StatusCode::NOT_FOUND)

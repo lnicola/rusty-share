@@ -28,6 +28,13 @@ pub enum Error {
         cause: diesel::result::Error,
     },
     StreamCancelled,
+    InvalidArgument,
+    Hyper {
+        cause: hyper::Error,
+    },
+    R2d2 {
+        cause: diesel::r2d2::PoolError,
+    },
 }
 
 impl Error {
@@ -65,6 +72,18 @@ impl From<diesel::result::Error> for Error {
     }
 }
 
+impl From<hyper::Error> for Error {
+    fn from(cause: hyper::Error) -> Self {
+        Error::Hyper { cause }
+    }
+}
+
+impl From<diesel::r2d2::PoolError> for Error {
+    fn from(cause: diesel::r2d2::PoolError) -> Self {
+        Error::R2d2 { cause }
+    }
+}
+
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
@@ -83,7 +102,10 @@ impl Display for Error {
             ),
             Error::AddrParse { cause, addr } => write!(f, "{} for address {}", cause, addr),
             Error::Diesel { cause } => cause.fmt(f),
+            Error::Hyper { cause } => cause.fmt(f),
+            Error::R2d2 { cause } => cause.fmt(f),
             Error::StreamCancelled => write!(f, "the archiving stream was cancelled unexpectedly"),
+            Error::InvalidArgument => write!(f, "invalid argument"),
         }
     }
 }
