@@ -158,10 +158,15 @@ fn vec_from_body(body: Body) -> impl Future<Item = Vec<u8>, Error = Error> {
 }
 
 impl RustyShare {
-    fn lookup_share(root: PathBuf, store: &DbStore, name: &str) -> Result<PathBuf, Response> {
+    fn lookup_share(
+        root: PathBuf,
+        store: &DbStore,
+        name: &str,
+        user_id: Option<i32>,
+    ) -> Result<PathBuf, Response> {
         if let Some(ref store) = store.0 {
             let path = store
-                .lookup_share(name)
+                .lookup_share(name, user_id)
                 .map_err(|e| {
                     error!("{}", e);
                     response::internal_server_error()
@@ -175,10 +180,10 @@ impl RustyShare {
         }
     }
 
-    fn get_shares(store: &DbStore) -> Result<Vec<Share>, Response> {
+    fn get_shares(store: &DbStore, user_id: Option<i32>) -> Result<Vec<Share>, Response> {
         if let Some(ref store) = store.0 {
             let shares = store
-                .get_share_names()
+                .get_share_names(user_id)
                 .map_err(|e| {
                     error!("{}", e);
                     response::internal_server_error()
@@ -263,23 +268,41 @@ impl RustyShare {
                         .skip(1)
                         .map(|c| Path::new(c.as_os_str()))
                         .collect::<PathBuf>();
+                    let user_id = match authentication {
+                        Authentication::User(user_id, name) => {
+                            info!(
+                                "{} {} /browse/{}/{}",
+                                name,
+                                parts.method,
+                                share,
+                                path.display()
+                            );
+                            Some(user_id)
+                        }
+                        Authentication::Error(_) => {
+                            info!(
+                                "anonymous {} /browse/{}/{}",
+                                parts.method,
+                                share,
+                                path.display()
+                            );
+                            None
+                        }
+                    };
 
-                    match Self::lookup_share(root, &store, &share) {
-                        Ok(share) => match authentication {
-                            Authentication::User(user) => {
-                                if parts.method == Method::GET {
-                                    let request = request_from_parts(&parts);
-                                    let res = RustyShare::browse(share, path, request, &user);
-                                    Either3::C(res)
-                                } else {
-                                    let fut = files_from_body(body).and_then(move |files| {
-                                        RustyShare::archive(share, path, files, &user)
-                                    });
-                                    Either3::B(fut)
-                                }
+                    let share = Self::lookup_share(root, &store, &share, user_id);
+                    match share {
+                        Ok(share) => {
+                            if parts.method == Method::GET {
+                                let request = request_from_parts(&parts);
+                                let res = RustyShare::browse(share, path, request);
+                                Either3::C(res)
+                            } else {
+                                let fut = files_from_body(body)
+                                    .and_then(move |files| RustyShare::archive(share, path, files));
+                                Either3::B(fut)
                             }
-                            Authentication::Error(res) => Either3::A(future::ok(res)),
-                        },
+                        }
                         Err(res) => Either3::A(future::ok(res)),
                     }
                 }
@@ -325,14 +348,20 @@ impl RustyShare {
         self.get_db().map(move |store| {
             let authentication = Self::get_authentication(&store, &parts);
             match authentication {
-                Authentication::User(user) => {
-                    info!("{} GET /browse/", user);
-                    match Self::get_shares(&store) {
+                Authentication::User(user_id, name) => {
+                    info!("{} GET /browse/", name);
+                    match Self::get_shares(&store, Some(user_id)) {
                         Ok(shares) => page::shares(&shares),
                         Err(response) => response,
                     }
                 }
-                Authentication::Error(res) => res,
+                Authentication::Error(_) => {
+                    info!("anonymous GET /browse/");
+                    match Self::get_shares(&store, None) {
+                        Ok(shares) => page::shares(&shares),
+                        Err(response) => response,
+                    }
+                }
             }
         })
     }
@@ -353,14 +382,7 @@ impl RustyShare {
         share: PathBuf,
         path: PathBuf,
         request: Request<()>,
-        user: &str,
     ) -> impl Future<Item = Response, Error = Error> {
-        info!(
-            "{} GET /browse/{}/{}",
-            user,
-            share.display(),
-            path.display()
-        );
         let disk_path = share.join(&path);
         let uri_path = request.uri().path().to_string();
 
@@ -403,14 +425,7 @@ impl RustyShare {
         share: PathBuf,
         path: PathBuf,
         files: Vec<String>,
-        user: &str,
     ) -> impl Future<Item = Response, Error = Error> {
-        info!(
-            "{} POST /browse/{}/{}",
-            user,
-            share.display(),
-            path.display()
-        );
         let disk_path = share.join(&path);
         BlockingFutureTry::new(move || {
             let mut files = files.iter().map(PathBuf::from).collect::<Vec<_>>();

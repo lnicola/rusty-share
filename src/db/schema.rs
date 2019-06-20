@@ -20,7 +20,16 @@ table! {
         id -> Integer,
         name -> Text,
         path -> Text,
+        access_level -> Integer,
     }
 }
 
-allow_tables_to_appear_in_same_query!(sessions, users,);
+table! {
+    user_shares (user_id, share_id) {
+        user_id -> Integer,
+        share_id -> Integer,
+    }
+}
+
+allow_tables_to_appear_in_same_query!(shares, user_shares,);
+// allow_tables_to_appear_in_same_query!(sessions, users,);

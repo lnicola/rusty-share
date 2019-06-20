@@ -6,12 +6,16 @@ use http::Uri;
 use log::error;
 
 pub enum Authentication {
-    User(String),
+    User(i32, String),
     Error(Response),
 }
 
-fn check_session(store: &DbStore, uri: &Uri, cookie: Option<Cookie>) -> Result<String, Response> {
-    let user = if let Some(ref store) = store.0 {
+fn check_session(
+    store: &DbStore,
+    uri: &Uri,
+    cookie: Option<Cookie>,
+) -> Result<(i32, String), Response> {
+    let r = if let Some(ref store) = store.0 {
         let redirect = || response::login_redirect(uri, false);
         let cookie = cookie.ok_or_else(redirect)?;
         let session_id = cookie.get("sid").ok_or_else(|| redirect())?;
@@ -19,24 +23,23 @@ fn check_session(store: &DbStore, uri: &Uri, cookie: Option<Cookie>) -> Result<S
             error!("{}", e);
             redirect()
         })?;
-        let (_, user) = store
+        store
             .lookup_session(&session_id)
             .map_err(|e| {
                 error!("{}", e);
                 response::internal_server_error()
             })?
-            .ok_or_else(redirect)?;
-        user
+            .ok_or_else(redirect)?
     } else {
-        String::new()
+        (0, String::new())
     };
-    Ok(user)
+    Ok(r)
 }
 
 impl Authentication {
     pub fn extract(store: &DbStore, uri: &Uri, cookie: Option<Cookie>) -> Self {
         match check_session(&store, uri, cookie) {
-            Ok(user) => Authentication::User(user),
+            Ok((user_id, name)) => Authentication::User(user_id, name),
             Err(response) => Authentication::Error(response),
         }
     }

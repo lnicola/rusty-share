@@ -21,6 +21,7 @@ pub fn index(entries: &[ShareEntry]) -> Response<Body> {
             body {
                 form(method="POST") {
                     div(class="view") {
+                        p { a(href="/login") { : Raw("login") } }
                         div(class="entry header") {
                             div { }
                             div { : Raw("Name") }
@@ -78,6 +79,7 @@ pub fn shares(shares: &[Share]) -> Response<Body> {
             }
             body {
                 div(class="view") {
+                    p { a(href="/login") { : Raw("login") } }
                     div(class="entry header share") {
                         div { : Raw("Name") }
                     }

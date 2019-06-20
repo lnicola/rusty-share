@@ -1,9 +1,11 @@
-use super::models::User;
-use super::schema::{sessions, shares, users};
+use super::models::{AccessLevel, User};
+use super::schema::{sessions, shares, user_shares, users};
 use super::Conn;
 use diesel::result::Error;
+use diesel::sql_types::{Integer, Nullable};
 use diesel::{
-    self, Connection, ExpressionMethods, OptionalExtension, QueryDsl, QueryResult, RunQueryDsl,
+    self, dsl, BoolExpressionMethods, Connection, ExpressionMethods, IntoSql,
+    NullableExpressionMethods, OptionalExtension, QueryDsl, QueryResult, RunQueryDsl,
     SqliteConnection,
 };
 use std::path::PathBuf;
@@ -19,6 +21,7 @@ impl Store {
         diesel::sql_query(include_str!("../../db/users.sql")).execute(self.connection())?;
         diesel::sql_query(include_str!("../../db/sessions.sql")).execute(self.connection())?;
         diesel::sql_query(include_str!("../../db/shares.sql")).execute(self.connection())?;
+        diesel::sql_query(include_str!("../../db/user_shares.sql")).execute(self.connection())?;
         Ok(())
     }
 
@@ -74,24 +77,62 @@ impl Store {
         }
     }
 
-    pub fn lookup_share(&self, name: &str) -> QueryResult<Option<PathBuf>> {
+    pub fn lookup_share(&self, name: &str, user_id: Option<i32>) -> QueryResult<Option<PathBuf>> {
         shares::table
             .filter(shares::name.eq(name))
+            .filter(
+                shares::access_level
+                    .eq(AccessLevel::Public as i32)
+                    .or(shares::access_level
+                        .eq(AccessLevel::Authenticated as i32)
+                        .and(user_id.into_sql::<Nullable<Integer>>().is_not_null()))
+                    .or(shares::access_level
+                        .eq(AccessLevel::Restricted as i32)
+                        .and(dsl::exists(
+                            user_shares::table.filter(
+                                user_shares::user_id
+                                    .nullable()
+                                    .eq(user_id)
+                                    .and(user_shares::share_id.eq(shares::id)),
+                            ),
+                        ))),
+            )
             .select(shares::path)
             .first::<String>(self.connection())
             .map(PathBuf::from)
             .optional()
     }
 
-    pub fn get_share_names(&self) -> QueryResult<Vec<String>> {
+    pub fn get_share_names(&self, user_id: Option<i32>) -> QueryResult<Vec<String>> {
         shares::table
             .select(shares::name)
+            .filter(
+                shares::access_level
+                    .eq(AccessLevel::Public as i32)
+                    .or(shares::access_level
+                        .eq(AccessLevel::Authenticated as i32)
+                        .and(user_id.into_sql::<Nullable<Integer>>().is_not_null()))
+                    .or(shares::access_level
+                        .eq(AccessLevel::Restricted as i32)
+                        .and(dsl::exists(
+                            user_shares::table.filter(
+                                user_shares::user_id
+                                    .nullable()
+                                    .eq(user_id)
+                                    .and(user_shares::share_id.eq(shares::id)),
+                            ),
+                        ))),
+            )
             .load::<String>(self.connection())
     }
 
     pub fn create_share(&self, name: &str, path: &str) -> QueryResult<i32> {
         diesel::insert_into(shares::table)
-            .values((shares::name.eq(name), shares::path.eq(path)))
+            .values((
+                shares::name.eq(name),
+                shares::path.eq(path),
+                shares::access_level.eq(AccessLevel::Authenticated as i32),
+            ))
             .execute(self.connection())?;
         super::last_inserted_row_id(self.connection())
     }
