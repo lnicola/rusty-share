@@ -42,5 +42,4 @@ macro_rules! define_either {
 
 define_either!(Either2, A, B);
 define_either!(Either3, A, B, C);
-define_either!(Either4, A, B, C, D);
 define_either!(Either6, A, B, C, D, E, F);

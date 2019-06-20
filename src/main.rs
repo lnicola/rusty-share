@@ -67,13 +67,9 @@ mod share_entry;
 type Pool = r2d2::Pool<ConnectionManager<SqliteConnection>>;
 type Response = http::Response<Body>;
 
-pub struct Config {
-    pool: Option<Pool>,
-}
-
 struct RustyShare {
     root: PathBuf,
-    has_db: bool,
+    pool: Option<Pool>,
 }
 
 fn get_archive(archive: Archive) -> Body {
@@ -123,10 +119,10 @@ struct LoginForm {
 }
 
 impl LoginForm {
-    pub fn from_bytes(input: &[u8]) -> Self {
+    pub fn from_bytes<T: AsRef<[u8]>>(input: T) -> Self {
         let mut user = String::new();
         let mut pass = String::new();
-        for p in form_urlencoded::parse(input) {
+        for p in form_urlencoded::parse(input.as_ref()) {
             if p.0 == "user" {
                 user = p.1.into_owned();
             } else if p.0 == "pass" {
@@ -137,44 +133,32 @@ impl LoginForm {
     }
 
     fn from_body(body: Body) -> impl Future<Item = Self, Error = Error> {
-        body.concat2()
-            .map_err(|_e| Error::StreamCancelled)
-            .and_then(move |body| {
-                let vec = body.to_vec();
-                let form = Self::from_bytes(vec.as_slice());
-                future::ok(form)
-            })
+        vec_from_body(body).map(Self::from_bytes)
     }
 }
 
-struct Files {
-    s: Vec<String>,
+fn files_from_body(body: Body) -> impl Future<Item = Vec<String>, Error = Error> {
+    vec_from_body(body).map(|buf| {
+        form_urlencoded::parse(buf.as_ref())
+            .filter_map(|p| {
+                if p.0 == "s" {
+                    Some(p.1.into_owned())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    })
 }
 
-impl Files {
-    pub fn from_bytes(input: &[u8]) -> Self {
-        let mut files = vec![];
-        for p in form_urlencoded::parse(input) {
-            if p.0 == "s" {
-                files.push(p.1.into_owned());
-            }
-        }
-        Self { s: files }
-    }
-
-    fn from_body(body: Body) -> impl Future<Item = Self, Error = Error> {
-        body.concat2()
-            .map_err(|_e| Error::StreamCancelled)
-            .and_then(move |body| {
-                let vec = body.to_vec();
-                let files = Files::from_bytes(vec.as_slice());
-                future::ok(files)
-            })
-    }
+fn vec_from_body(body: Body) -> impl Future<Item = Vec<u8>, Error = Error> {
+    body.concat2()
+        .map_err(|_e| Error::StreamCancelled)
+        .map(|body| body.to_vec())
 }
 
 impl RustyShare {
-    fn lookup_share(&self, store: &DbStore, name: &str) -> Result<PathBuf, Response> {
+    fn lookup_share(root: PathBuf, store: &DbStore, name: &str) -> Result<PathBuf, Response> {
         if let Some(ref store) = store.0 {
             let path = store
                 .lookup_share(name)
@@ -185,13 +169,13 @@ impl RustyShare {
                 .ok_or_else(response::not_found)?;
             Ok(path)
         } else if name == "public" {
-            Ok(self.root.clone())
+            Ok(root.clone())
         } else {
             Err(response::not_found())
         }
     }
 
-    fn get_shares(&self, store: &DbStore) -> Result<Vec<Share>, Response> {
+    fn get_shares(store: &DbStore) -> Result<Vec<Share>, Response> {
         if let Some(ref store) = store.0 {
             let shares = store
                 .get_share_names()
@@ -216,27 +200,23 @@ impl RustyShare {
         future::ok(response::not_found())
     }
 
-    fn login(
-        &self,
-        config: &Config,
-        parts: &Parts,
-        body: Body,
-    ) -> impl Future<Item = Response, Error = Error> {
+    fn login(&self, parts: Parts, body: Body) -> impl Future<Item = Response, Error = Error> {
         if parts.method == &Method::GET {
             Either2::A(self.login_page())
         } else {
-            let store = DbStore::extract(&config).unwrap();
-
-            let mut redirect = None;
-            for p in form_urlencoded::parse(parts.uri.query().unwrap_or("").as_bytes()) {
-                if p.0 == "redirect" {
-                    redirect = Some(p.1.into_owned());
-                }
-            }
-
-            let fut = LoginForm::from_body(body).and_then(move |form| {
-                let res = Self::login_action(store, redirect, &form.user, &form.pass);
-                future::ok(res)
+            let fut = self.get_db().and_then(move |store| {
+                let redirect = form_urlencoded::parse(parts.uri.query().unwrap_or("").as_bytes())
+                    .filter_map(|p| {
+                        if p.0 == "redirect" {
+                            Some(p.1.into_owned())
+                        } else {
+                            None
+                        }
+                    })
+                    .next();
+                let fut = LoginForm::from_body(body)
+                    .map(|form| Self::login_action(store, redirect, &form.user, &form.pass));
+                fut
             });
             Either2::B(fut)
         }
@@ -245,72 +225,75 @@ impl RustyShare {
 
     fn browse_or_archive(
         &self,
-        store: &DbStore,
-        authentication: Authentication,
-        parts: &Parts,
+        parts: Parts,
         body: Body,
     ) -> impl Future<Item = Response, Error = Error> {
-        let pb = decode(parts.uri.path())
-            .map(|s| {
-                PathBuf::from(s)
-                    .components()
-                    .skip(2)
-                    .map(|c| Path::new(c.as_os_str()))
-                    .collect::<PathBuf>()
-            })
-            .and_then(|pb| {
-                if check_for_path_traversal(&pb) {
-                    Ok(pb)
-                } else {
-                    Err(Error::InvalidArgument)
-                }
-            });
-        match pb {
-            Ok(pb) => {
-                let share = pb
-                    .components()
-                    .next()
-                    .unwrap()
-                    .as_os_str()
-                    .to_str()
-                    .unwrap()
-                    .to_string();
+        let root = self.root.clone();
+        self.get_db().and_then(move |store| {
+            let authentication = Self::get_authentication(&store, &parts);
 
-                let path = pb
-                    .components()
-                    .skip(1)
-                    .map(|c| Path::new(c.as_os_str()))
-                    .collect::<PathBuf>();
+            let pb = decode(parts.uri.path())
+                .map(|s| {
+                    PathBuf::from(s)
+                        .components()
+                        .skip(2)
+                        .map(|c| Path::new(c.as_os_str()))
+                        .collect::<PathBuf>()
+                })
+                .and_then(|pb| {
+                    if check_for_path_traversal(&pb) {
+                        Ok(pb)
+                    } else {
+                        Err(Error::InvalidArgument)
+                    }
+                });
+            match pb {
+                Ok(pb) => {
+                    let share = pb
+                        .components()
+                        .next()
+                        .unwrap()
+                        .as_os_str()
+                        .to_str()
+                        .unwrap()
+                        .to_string();
 
-                match self.lookup_share(store, &share) {
-                    Ok(share) => match authentication {
-                        Authentication::User(user) => {
-                            if parts.method == Method::GET {
-                                let request = request_from_parts(&parts);
-                                let res = RustyShare::browse(share, path, request, &user);
-                                Either3::C(res)
-                            } else {
-                                let fut = Files::from_body(body).and_then(move |files| {
-                                    RustyShare::archive(share, path, files, &user)
-                                });
-                                Either3::B(fut)
+                    let path = pb
+                        .components()
+                        .skip(1)
+                        .map(|c| Path::new(c.as_os_str()))
+                        .collect::<PathBuf>();
+
+                    match Self::lookup_share(root, &store, &share) {
+                        Ok(share) => match authentication {
+                            Authentication::User(user) => {
+                                if parts.method == Method::GET {
+                                    let request = request_from_parts(&parts);
+                                    let res = RustyShare::browse(share, path, request, &user);
+                                    Either3::C(res)
+                                } else {
+                                    let fut = files_from_body(body).and_then(move |files| {
+                                        RustyShare::archive(share, path, files, &user)
+                                    });
+                                    Either3::B(fut)
+                                }
                             }
-                        }
-                        Authentication::Error(res) => Either3::A(future::ok(res)),
-                    },
-                    Err(res) => Either3::A(future::ok(res)),
+                            Authentication::Error(res) => Either3::A(future::ok(res)),
+                        },
+                        Err(res) => Either3::A(future::ok(res)),
+                    }
+                }
+                Err(e) => {
+                    error!("{}", e);
+                    Either3::A(future::ok(response::bad_request()))
                 }
             }
-            Err(e) => {
-                error!("{}", e);
-                Either3::A(future::ok(response::bad_request()))
-            }
-        }
-        .map(|r| r.into_inner())
+            .map(|r| r.into_inner())
+        })
     }
 
     fn login_page(&self) -> impl Future<Item = Response, Error = Error> {
-        if self.has_db {
+        if self.pool.is_some() {
             future::ok(page::login(None))
         } else {
             future::ok(response::not_found())
@@ -338,22 +321,32 @@ impl RustyShare {
         }
     }
 
-    fn browse_shares(
-        &self,
-        store: &DbStore,
-        authentication: Authentication,
-    ) -> impl Future<Item = Response, Error = Error> {
-        let res = match authentication {
-            Authentication::User(user) => {
-                info!("{} GET /browse/", user);
-                match self.get_shares(store) {
-                    Ok(shares) => page::shares(&shares),
-                    Err(response) => response,
+    fn browse_shares(&self, parts: Parts) -> impl Future<Item = Response, Error = Error> {
+        self.get_db().map(move |store| {
+            let authentication = Self::get_authentication(&store, &parts);
+            match authentication {
+                Authentication::User(user) => {
+                    info!("{} GET /browse/", user);
+                    match Self::get_shares(&store) {
+                        Ok(shares) => page::shares(&shares),
+                        Err(response) => response,
+                    }
                 }
+                Authentication::Error(res) => res,
             }
-            Authentication::Error(res) => res,
-        };
-        future::ok(res)
+        })
+    }
+
+    fn get_db(&self) -> impl Future<Item = DbStore, Error = Error> {
+        let pool = self.pool.clone();
+        BlockingFutureTry::new(move || DbStore::extract(&pool)).map_err(|e| {
+            error!("{}", e);
+            e
+        })
+    }
+
+    fn get_authentication(store: &DbStore, parts: &Parts) -> Authentication {
+        Authentication::extract(store, &parts.uri, parts.headers.typed_get::<Cookie>())
     }
 
     fn browse(
@@ -393,7 +386,7 @@ impl RustyShare {
                                 .and_then(|file| ChunkedReadFile::new(file, None, headers))
                                 .map_err(|e| Error::from_io(e, disk_path))
                         })
-                        .and_then(move |crf| future::ok(http_serve::serve(crf, &request)));
+                        .map(move |crf| http_serve::serve(crf, &request));
 
                         Either3::C(fut)
                     }
@@ -409,7 +402,7 @@ impl RustyShare {
     fn archive(
         share: PathBuf,
         path: PathBuf,
-        files: Files,
+        files: Vec<String>,
         user: &str,
     ) -> impl Future<Item = Response, Error = Error> {
         info!(
@@ -420,7 +413,7 @@ impl RustyShare {
         );
         let disk_path = share.join(&path);
         BlockingFutureTry::new(move || {
-            let mut files = files.s.iter().map(PathBuf::from).collect::<Vec<_>>();
+            let mut files = files.iter().map(PathBuf::from).collect::<Vec<_>>();
             if files.is_empty() {
                 for entry in dir_entries(&disk_path)? {
                     let path = entry.path();
@@ -455,44 +448,37 @@ impl RustyShare {
             Ok(response)
         })
     }
-}
 
-fn handle_request(
-    config: &Arc<Config>,
-    rusty_share: &Arc<RustyShare>,
-    req: Request<Body>,
-) -> impl Future<Item = Response, Error = Error> {
-    let (parts, body) = req.into_parts();
-    match (&parts.method, parts.uri.path()) {
-        (&Method::GET, "/") => {
-            let res = rusty_share.index();
-            Either6::C(res)
+    pub fn handle_request(
+        &self,
+        req: Request<Body>,
+    ) -> impl Future<Item = Response, Error = Error> {
+        let (parts, body) = req.into_parts();
+        match (&parts.method, parts.uri.path()) {
+            (&Method::GET, "/") => {
+                let res = self.index();
+                Either6::C(res)
+            }
+            (&Method::GET, "/login") | (&Method::POST, "/login") => {
+                let res = self.login(parts, body);
+                Either6::E(res)
+            }
+            (&Method::GET, "/favicon.ico") => {
+                let res = self.favicon();
+                Either6::F(res)
+            }
+            (&Method::GET, "/browse/") => {
+                let fut = self.browse_shares(parts);
+                Either6::B(fut)
+            }
+            (&Method::GET, path) | (&Method::POST, path) if path.starts_with("/browse/") => {
+                let fut = self.browse_or_archive(parts, body);
+                Either6::D(fut)
+            }
+            _ => Either6::A(future::ok(response::bad_request())),
         }
-        (&Method::GET, "/login") | (&Method::POST, "/login") => {
-            let res = rusty_share.login(&config, &parts, body);
-            Either6::E(res)
-        }
-        (&Method::GET, "/favicon.ico") => {
-            let res = rusty_share.favicon();
-            Either6::F(res)
-        }
-        (&Method::GET, "/browse/") => {
-            let store = DbStore::extract(&config).unwrap();
-            let authentication =
-                Authentication::extract(&store, &parts.uri, parts.headers.typed_get::<Cookie>());
-            let fut = rusty_share.browse_shares(&store, authentication);
-            Either6::B(fut)
-        }
-        (&Method::GET, path) | (&Method::POST, path) if path.starts_with("/browse/") => {
-            let store = DbStore::extract(&config).unwrap();
-            let authentication =
-                Authentication::extract(&store, &parts.uri, parts.headers.typed_get::<Cookie>());
-            let fut = rusty_share.browse_or_archive(&store, authentication, &parts, body);
-            Either6::D(fut)
-        }
-        _ => Either6::A(future::ok(response::bad_request())),
+        .map(|r| r.into_inner())
     }
-    .map(|r| r.into_inner())
 }
 
 fn run() -> Result<(), Error> {
@@ -542,21 +528,16 @@ fn run() -> Result<(), Error> {
     );
     println!("Listening on http://{}", addr);
 
-    let has_db = pool.is_some();
-    let config = Config { pool };
-
     let rusty_share = RustyShare {
         root: options.root,
-        has_db,
+        pool,
     };
 
     let rusty_share = Arc::new(rusty_share);
-    let config = Arc::new(config);
 
     let new_svc = move || {
         let rusty_share = Arc::clone(&rusty_share);
-        let config = Arc::clone(&config);
-        service_fn(move |req: Request<Body>| handle_request(&config, &rusty_share, req))
+        service_fn(move |req: Request<Body>| rusty_share.handle_request(req))
     };
 
     let listener = std::net::TcpListener::bind(&addr)?;

@@ -1,12 +1,11 @@
 use crate::db::{Conn, Store};
-use crate::Config;
+use crate::Pool;
 
 pub struct DbStore(pub Option<Store>);
 
 impl DbStore {
-    pub fn extract(config: &Config) -> Result<Self, crate::Error> {
-        let store = config
-            .pool
+    pub fn extract(pool: &Option<Pool>) -> Result<Self, crate::Error> {
+        let store = pool
             .as_ref()
             .map(|pool| pool.get())
             .transpose()?
