@@ -45,12 +45,15 @@ impl ShareEntry {
     }
 
     pub fn try_from(value: &DirEntry) -> Result<Self, Error> {
-        let metadata = value
+        let mut metadata = value
             .metadata()
             .map_err(|e| Error::from_io(e, value.path().to_path_buf()))?;
-        let file_type = metadata.file_type();
-        let is_dir =
-            file_type.is_dir() || file_type.is_symlink() && fs::metadata(value.path())?.is_dir();
+        if metadata.file_type().is_symlink() {
+            metadata = fs::metadata(value.path())
+                .map_err(|e| Error::from_io(e, value.path().to_path_buf()))?;
+        }
+
+        let is_dir = metadata.file_type().is_dir();
         let mut name = value.file_name();
         if is_dir {
             name.push("/");
