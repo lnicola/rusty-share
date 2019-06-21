@@ -74,7 +74,7 @@ body {
     border: solid #ededed;
     border-width: 0 1px 1px;
     display: grid;
-    grid-template-columns: 3rem 6rem 10rem auto;
+    grid-template-columns: 3rem 7rem 10rem auto;
     grid-template-areas: "selected name name name""selected size date .";
 }
 
