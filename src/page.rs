@@ -10,7 +10,7 @@ use http::Response;
 use hyper::Body;
 use log::error;
 
-pub fn index(entries: &[ShareEntry]) -> Response<Body> {
+pub fn index(entries: &[ShareEntry], user_name: Option<String>) -> Response<Body> {
     let page = html! {
         : doctype::HTML;
         html {
@@ -21,7 +21,16 @@ pub fn index(entries: &[ShareEntry]) -> Response<Body> {
             body {
                 form(method="POST") {
                     div(class="view") {
-                        p { a(href="/login") { : Raw("login") } }
+                        p {
+                            @ if let Some(user) = user_name {
+                                : Raw("Logged in as ");
+                                : user;
+                                : Raw(" ");
+                            } else {
+                                : Raw("Browsing anonymously");
+                            }
+                            a(href="/login") { : Raw("login") }
+                        }
                         div(class="entry header") {
                             div { }
                             div { : Raw("Name") }
@@ -69,7 +78,7 @@ pub fn index(entries: &[ShareEntry]) -> Response<Body> {
     }
 }
 
-pub fn shares(shares: &[Share]) -> Response<Body> {
+pub fn shares(shares: &[Share], user_name: Option<String>) -> Response<Body> {
     let page = html! {
         : doctype::HTML;
         html {
@@ -79,7 +88,16 @@ pub fn shares(shares: &[Share]) -> Response<Body> {
             }
             body {
                 div(class="view") {
-                    p { a(href="/login") { : Raw("login") } }
+                    p {
+                        @ if let Some(user) = user_name {
+                            : Raw("Logged in as ");
+                            : user;
+                            : Raw(" ");
+                        } else {
+                            : Raw("Browsing anonymously ");
+                        }
+                        a(href="/login") { : Raw("login") }
+                    }
                     div(class="entry header share") {
                         div { : Raw("Name") }
                     }

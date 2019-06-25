@@ -268,7 +268,7 @@ impl RustyShare {
                         .skip(1)
                         .map(|c| Path::new(c.as_os_str()))
                         .collect::<PathBuf>();
-                    let user_id = match authentication {
+                    let (user_id, user_name) = match authentication {
                         Authentication::User(user_id, name) => {
                             info!(
                                 "{} {} /browse/{}/{}",
@@ -277,7 +277,7 @@ impl RustyShare {
                                 share,
                                 path.display()
                             );
-                            Some(user_id)
+                            (Some(user_id), Some(name))
                         }
                         Authentication::Error(_) => {
                             info!(
@@ -286,7 +286,7 @@ impl RustyShare {
                                 share,
                                 path.display()
                             );
-                            None
+                            (None, None)
                         }
                     };
 
@@ -295,7 +295,7 @@ impl RustyShare {
                         Ok(share) => {
                             if parts.method == Method::GET {
                                 let request = request_from_parts(&parts);
-                                let res = RustyShare::browse(share, path, request);
+                                let res = RustyShare::browse(share, path, request, user_name);
                                 Either3::C(res)
                             } else {
                                 let fut = files_from_body(body)
@@ -351,14 +351,14 @@ impl RustyShare {
                 Authentication::User(user_id, name) => {
                     info!("{} GET /browse/", name);
                     match Self::get_shares(&store, Some(user_id)) {
-                        Ok(shares) => page::shares(&shares),
+                        Ok(shares) => page::shares(&shares, Some(name)),
                         Err(response) => response,
                     }
                 }
                 Authentication::Error(_) => {
                     info!("anonymous GET /browse/");
                     match Self::get_shares(&store, None) {
-                        Ok(shares) => page::shares(&shares),
+                        Ok(shares) => page::shares(&shares, None),
                         Err(response) => response,
                     }
                 }
@@ -382,6 +382,7 @@ impl RustyShare {
         share: PathBuf,
         path: PathBuf,
         request: Request<()>,
+        user_name: Option<String>,
     ) -> impl Future<Item = Response, Error = Error> {
         let disk_path = share.join(&path);
         let uri_path = request.uri().path().to_string();
@@ -393,8 +394,9 @@ impl RustyShare {
                         if !uri_path.ends_with('/') {
                             Either3::A(future::ok(response::found(&(uri_path + "/"))))
                         } else {
-                            let fut = BlockingFuture::new(move || render_index(&disk_path))
-                                .map_err(|_| unreachable!());
+                            let fut =
+                                BlockingFuture::new(move || render_index(&disk_path, user_name))
+                                    .map_err(|_| unreachable!());
                             Either3::B(fut)
                         }
                     } else {
@@ -659,13 +661,13 @@ pub fn is_hidden(path: &OsStr) -> bool {
     path.as_bytes().starts_with(b".")
 }
 
-fn render_index(path: &Path) -> Response {
+fn render_index(path: &Path, user_name: Option<String>) -> Response {
     let enumerate_start = Instant::now();
     match get_dir_entries(&path) {
         Ok(entries) => {
             let render_start = Instant::now();
             let enumerate_time = render_start - enumerate_start;
-            let rendered = page::index(&entries);
+            let rendered = page::index(&entries, user_name);
             let render_time = Instant::now() - render_start;
             info!(
                 "enumerate: {} ms, render: {} ms",
