@@ -142,7 +142,9 @@ fn files_from_body(body: Body) -> impl Future<Item = Vec<String>, Error = Error>
         form_urlencoded::parse(buf.as_ref())
             .filter_map(|p| {
                 if p.0 == "s" {
-                    Some(p.1.into_owned())
+                    let percent_decoded =
+                        Cow::from(percent_encoding::percent_decode(p.1.as_bytes()));
+                    String::from_utf8(percent_decoded.into_owned()).ok()
                 } else {
                     None
                 }
