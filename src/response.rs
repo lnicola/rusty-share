@@ -73,6 +73,22 @@ pub fn archive(content_length: u64, body: Body, file_name: &str) -> Response<Bod
         .unwrap()
 }
 
+pub fn archive2(resp: &mut Response<Body>, content_length: u64, file_name: &str) {
+    let file_name = percent_encoding::percent_encode(
+        file_name.as_bytes(),
+        percent_encoding::DEFAULT_ENCODE_SET,
+    )
+    .to_string();
+    let content_disposition =
+        HeaderValue::from_str(&format!("attachment; filename*=UTF-8''{}", file_name)).unwrap();
+    resp.headers_mut()
+        .append(CONTENT_DISPOSITION, content_disposition);
+    resp.headers_mut()
+        .append(CONTENT_TYPE, HeaderValue::from_static("application/x-tar"));
+    resp.headers_mut()
+        .append(CONTENT_LENGTH, HeaderValue::from(content_length));
+}
+
 pub fn found(location: &str) -> Response<Body> {
     Response::builder()
         .status(StatusCode::FOUND)
