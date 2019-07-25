@@ -603,7 +603,7 @@ fn osstr_from_bytes(bytes: &[u8]) -> Result<&OsStr, Error> {
 }
 
 fn decode(s: &str) -> Result<OsString, Error> {
-    let percent_decoded = Cow::from(percent_encoding::percent_decode(s.as_bytes()));
+    let percent_decoded = Cow::from(percent_encoding::percent_decode_str(s));
     Ok(osstr_from_bytes(percent_decoded.as_ref())?.to_os_string())
 }
 
