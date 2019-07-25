@@ -1,5 +1,3 @@
-use url::percent_encoding;
-
 #[derive(Debug)]
 pub struct Share {
     name: String,
@@ -9,7 +7,7 @@ pub struct Share {
 impl Share {
     pub fn new(name: String) -> Self {
         let link =
-            percent_encoding::percent_encode(name.as_bytes(), percent_encoding::DEFAULT_ENCODE_SET)
+            percent_encoding::percent_encode(name.as_bytes(), percent_encoding::NON_ALPHANUMERIC)
                 .to_string();
         Self { name, link }
     }

@@ -5,7 +5,6 @@ use http::header::{
 use http::{Response, StatusCode, Uri};
 use hyper::Body;
 use time::Duration;
-use url::percent_encoding;
 
 pub fn page(html: String) -> Response<Body> {
     Response::builder()
@@ -36,7 +35,7 @@ pub fn login_ok(session_id: String, redirect: &str) -> Response<Body> {
 pub fn login_redirect(path: &Uri, destroy_session: bool) -> Response<Body> {
     let path = path.path_and_query().map(|p| p.as_str()).unwrap_or("/");
     let path =
-        percent_encoding::percent_encode(path.as_bytes(), percent_encoding::DEFAULT_ENCODE_SET)
+        percent_encoding::percent_encode(path.as_bytes(), percent_encoding::NON_ALPHANUMERIC)
             .to_string();
     let mut builder = Response::builder();
 
@@ -58,11 +57,9 @@ pub fn login_redirect(path: &Uri, destroy_session: bool) -> Response<Body> {
 }
 
 pub fn archive(content_length: u64, body: Body, file_name: &str) -> Response<Body> {
-    let file_name = percent_encoding::percent_encode(
-        file_name.as_bytes(),
-        percent_encoding::DEFAULT_ENCODE_SET,
-    )
-    .to_string();
+    let file_name =
+        percent_encoding::percent_encode(file_name.as_bytes(), percent_encoding::NON_ALPHANUMERIC)
+            .to_string();
     let content_disposition =
         HeaderValue::from_str(&format!("attachment; filename*=UTF-8''{}", file_name)).unwrap();
     Response::builder()
@@ -74,11 +71,9 @@ pub fn archive(content_length: u64, body: Body, file_name: &str) -> Response<Bod
 }
 
 pub fn archive2(resp: &mut Response<Body>, content_length: u64, file_name: &str) {
-    let file_name = percent_encoding::percent_encode(
-        file_name.as_bytes(),
-        percent_encoding::DEFAULT_ENCODE_SET,
-    )
-    .to_string();
+    let file_name =
+        percent_encoding::percent_encode(file_name.as_bytes(), percent_encoding::NON_ALPHANUMERIC)
+            .to_string();
     let content_disposition =
         HeaderValue::from_str(&format!("attachment; filename*=UTF-8''{}", file_name)).unwrap();
     resp.headers_mut()

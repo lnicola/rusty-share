@@ -46,7 +46,7 @@ use structopt::StructOpt;
 use tar::Builder;
 use tokio;
 use tokio_sync::mpsc;
-use url::{form_urlencoded, percent_encoding};
+use url::form_urlencoded;
 use walkdir::WalkDir;
 
 mod archive;
