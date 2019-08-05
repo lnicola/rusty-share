@@ -403,8 +403,7 @@ impl RustyShare {
                         }
                     } else {
                         let mut headers = HeaderMap::new();
-                        let extension = disk_path.extension().and_then(OsStr::to_str).unwrap_or("");
-                        if let Some(mime) = mime_guess::get_mime_type_str(extension) {
+                        if let Some(mime) = mime_guess::from_path(&disk_path).first_raw() {
                             headers.insert(CONTENT_TYPE, HeaderValue::from_static(mime));
                         }
                         let fut = BlockingFutureTry::new(move || {
