@@ -1,8 +1,6 @@
 use cookie::{Cookie, SameSite};
-use http::header::{
-    HeaderValue, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE, LOCATION, SET_COOKIE,
-};
-use http::{Response, StatusCode, Uri};
+use http::header::{CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE, LOCATION, SET_COOKIE};
+use http::{HeaderValue, Response, StatusCode, Uri};
 use hyper::Body;
 use time::Duration;
 

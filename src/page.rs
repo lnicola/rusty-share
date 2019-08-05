@@ -4,9 +4,8 @@ use crate::share_entry::ShareEntry;
 use cookie::Cookie;
 use horrorshow::helper::doctype;
 use horrorshow::{html, Raw, Template};
-use http::header::HeaderValue;
 use http::header::SET_COOKIE;
-use http::Response;
+use http::{HeaderValue, Response};
 use hyper::Body;
 use log::error;
 
