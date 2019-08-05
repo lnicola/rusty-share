@@ -18,7 +18,7 @@ fn check_session(
     let r = if let Some(ref store) = store.0 {
         let redirect = || response::login_redirect(uri, false);
         let cookie = cookie.ok_or_else(redirect)?;
-        let session_id = cookie.get("sid").ok_or_else(|| redirect())?;
+        let session_id = cookie.get("sid").ok_or_else(redirect)?;
         let session_id = hex::decode(session_id).map_err(|e| {
             error!("{}", e);
             redirect()

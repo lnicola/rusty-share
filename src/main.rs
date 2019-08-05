@@ -208,7 +208,7 @@ impl RustyShare {
     }
 
     fn login(&self, parts: Parts, body: Body) -> impl Future<Item = Response, Error = Error> {
-        if parts.method == &Method::GET {
+        if parts.method == Method::GET {
             Either2::A(self.login_page())
         } else {
             let fut = self.get_db().and_then(move |store| {
@@ -221,9 +221,8 @@ impl RustyShare {
                         }
                     })
                     .next();
-                let fut = LoginForm::from_body(body)
-                    .map(|form| Self::login_action(store, redirect, &form.user, &form.pass));
-                fut
+                LoginForm::from_body(body)
+                    .map(|form| Self::login_action(store, redirect, &form.user, &form.pass))
             });
             Either2::B(fut)
         }
@@ -330,7 +329,7 @@ impl RustyShare {
             let redirect = redirect.unwrap_or_else(|| String::from("/browse/"));
 
             let session = authenticate(&store, user, pass).unwrap();
-            let response = if let Some(session_id) = session {
+            if let Some(session_id) = session {
                 info!("Authenticating {}: success", user);
                 response::login_ok(hex::encode(&session_id), &redirect)
             } else {
@@ -338,9 +337,7 @@ impl RustyShare {
                 page::login(Some(
                     "Login failed. Please contact the site owner to reset your password.",
                 ))
-            };
-
-            response
+            }
         } else {
             response::not_found()
         }
