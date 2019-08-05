@@ -91,20 +91,6 @@ fn get_archive(archive: Archive) -> Body {
     Body::wrap_stream(rx)
 }
 
-fn get_archive2<W: std::io::Write + Send + 'static>(archive: Archive, body_writer: W) {
-    let mut builder = Builder::new(body_writer);
-    let f = BlockingFutureTry::new(move || {
-        for entry in archive.entries() {
-            if let Err(e) = entry.write_to(&mut builder) {
-                error!("{}", e);
-            }
-        }
-        builder.finish()
-    })
-    .map_err(|e| error!("{}", e));
-    tokio::spawn(f);
-}
-
 fn get_archive_name(path_: &Path, files: &[PathBuf], single_dir: bool) -> String {
     if files.len() == 1 {
         if single_dir {
@@ -309,14 +295,13 @@ impl RustyShare {
                     let share = Self::lookup_share(root, &store, &share, user_id);
                     match share {
                         Ok(share) => {
-                            let request = request_from_parts(&parts);
                             if parts.method == Method::GET {
+                                let request = request_from_parts(&parts);
                                 let res = RustyShare::browse(share, path, request, user_name);
                                 Either3::C(res)
                             } else {
-                                let fut = files_from_body(body).and_then(move |files| {
-                                    RustyShare::archive(request, share, path, files)
-                                });
+                                let fut = files_from_body(body)
+                                    .and_then(move |files| RustyShare::archive(share, path, files));
                                 Either3::B(fut)
                             }
                         }
@@ -441,7 +426,6 @@ impl RustyShare {
     }
 
     fn archive(
-        request: Request<()>,
         share: PathBuf,
         path: PathBuf,
         files: Vec<String>,
@@ -477,14 +461,8 @@ impl RustyShare {
                     files.len() == 1 && fs::metadata(disk_path.join(&files[0]))?.is_dir();
                 let archive_name = get_archive_name(&disk_path, &files, single_dir);
                 let archive_size = archive.size();
-                let (mut response, body_writer) = http_serve::streaming_body(&request)
-                    .with_gzip_level(3)
-                    .build::<Body, _, _>();
-                let body_writer = body_writer.unwrap();
-                get_archive2(archive, body_writer);
-
-                response::archive2(&mut response, archive_size, &archive_name);
-                response
+                let body = get_archive(archive);
+                response::archive(archive_size, body, &archive_name)
                 // let body = get_archive(archive);
                 // response::archive(archive_size, body, &archive_name)
             };
