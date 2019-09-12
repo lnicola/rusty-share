@@ -13,7 +13,7 @@ cookie = "0.12"
 diesel = { version = "1.4", default-features = false, features = ["chrono", "r2d2", "sqlite"] }
 futures = { version = "0.1", default-features = false, features = ["use_std"] }
 headers = "0.2"
-hex = "0.3"
+hex = "0.4"
 horrorshow = { version = "0.7", default-features = false }
 http = "0.1"
 http-serve = "0.1"
