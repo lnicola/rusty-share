@@ -13,8 +13,7 @@ pub trait OsStrExt {
 #[cfg(target_os = "windows")]
 impl OsStrExt for OsStr {
     fn from_bytes(b: &[u8]) -> &Self {
-        use std::mem;
-        unsafe { mem::transmute(b) }
+        unsafe { &*(b as *const [u8] as *const std::ffi::OsStr) }
     }
     fn as_bytes(&self) -> &[u8] {
         self.to_str().map(|s| s.as_bytes()).unwrap()
