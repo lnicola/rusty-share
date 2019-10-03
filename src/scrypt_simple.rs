@@ -110,12 +110,12 @@ pub fn scrypt_check(password: &str, hashed_value: &str) -> Result<(), CheckError
 
     // Check that there are no characters before the first "$"
     if iter.next() != Some("") {
-        Err(CheckError::InvalidFormat)?;
+        return Err(CheckError::InvalidFormat);
     }
 
     // Check the name
     if iter.next() != Some("rscrypt") {
-        Err(CheckError::InvalidFormat)?;
+        return Err(CheckError::InvalidFormat);
     }
 
     // Parse format - currenlty only version 0 (compact) and 1 (expanded) are
@@ -128,8 +128,8 @@ pub fn scrypt_check(password: &str, hashed_value: &str) -> Result<(), CheckError
     let params = match fstr {
         "0" if pvec.len() == 3 => {
             let log_n = pvec[0];
-            let r = pvec[1] as u32;
-            let p = pvec[2] as u32;
+            let r = u32::from(pvec[1]);
+            let p = u32::from(pvec[2]);
             ScryptParams::new(log_n, r, p).map_err(|_| CheckError::InvalidFormat)
         }
         "1" if pvec.len() == 9 => {
@@ -155,12 +155,12 @@ pub fn scrypt_check(password: &str, hashed_value: &str) -> Result<(), CheckError
 
     // Make sure that the input ends with a "$"
     if iter.next() != Some("") {
-        Err(CheckError::InvalidFormat)?;
+        return Err(CheckError::InvalidFormat);
     }
 
     // Make sure there is no trailing data after the final "$"
     if iter.next() != None {
-        Err(CheckError::InvalidFormat)?;
+        return Err(CheckError::InvalidFormat);
     }
 
     let mut output = vec![0u8; hash.len()];
@@ -174,6 +174,6 @@ pub fn scrypt_check(password: &str, hashed_value: &str) -> Result<(), CheckError
     if output.ct_eq(&hash).unwrap_u8() == 1 {
         Ok(())
     } else {
-        Err(CheckError::HashMismatch)?
+        Err(CheckError::HashMismatch)
     }
 }
