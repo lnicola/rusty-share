@@ -31,7 +31,6 @@ use pretty_env_logger;
 use rand::{self, Rng};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
-use scrypt::{self, ScryptParams};
 use share::Share;
 use share_entry::ShareEntry;
 use std::borrow::Cow;
@@ -61,6 +60,7 @@ mod os_str_ext;
 mod page;
 mod pipe;
 mod response;
+mod scrypt_simple;
 mod share;
 mod share_entry;
 
@@ -684,15 +684,13 @@ fn render_index(path: &Path, user_name: Option<String>) -> Response {
 }
 
 pub fn register_user(store: &Store, name: &str, password: &str) -> Result<i32, Error> {
-    let params = ScryptParams::new(15, 8, 1).expect("recommended scrypt params should work");
-    let hash = scrypt::scrypt_simple(password, &params)?;
+    let hash = scrypt_simple::scrypt_simple(password, 15, 8, 1)?;
     let user_id = store.insert_user(name, &hash)?;
     Ok(user_id)
 }
 
 pub fn reset_password(store: &Store, name: &str, password: &str) -> Result<(), Error> {
-    let params = ScryptParams::new(15, 8, 1).expect("recommended scrypt params should work");
-    let hash = scrypt::scrypt_simple(password, &params)?;
+    let hash = scrypt_simple::scrypt_simple(password, 15, 8, 1)?;
     store.update_password_by_name(name, &hash)?;
     Ok(())
 }
@@ -706,7 +704,7 @@ pub fn authenticate(store: &Store, name: &str, password: &str) -> QueryResult<Op
     let user = store
         .find_user(name)?
         .and_then(|user| {
-            scrypt::scrypt_check(password, &user.password)
+            scrypt_simple::scrypt_check(password, &user.password)
                 .map(|_| user)
                 .map_err(|e| error!("Password verification failed for user {}: {}", name, e))
                 .ok()
