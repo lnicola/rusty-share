@@ -1,12 +1,12 @@
 use crate::error::Error;
+#[cfg(target_os = "windows")]
+use crate::os_str_ext::OsStrExt;
 use bytesize::ByteSize;
 use chrono::{DateTime, Local};
 use chrono_humanize::HumanTime;
 use std::fs::{self, DirEntry};
 #[cfg(not(target_os = "windows"))]
 use std::os::unix::ffi::OsStrExt;
-#[cfg(target_os = "windows")]
-use crate::os_str_ext::OsStrExt;
 
 #[derive(Debug)]
 pub struct ShareEntry {
