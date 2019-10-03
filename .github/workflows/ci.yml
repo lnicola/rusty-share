@@ -1,0 +1,74 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+jobs:
+  build:
+
+    name: Build - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+
+    steps:
+
+    - name: Checkout
+      uses: actions/checkout@v1
+
+    - name: Install toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+          toolchain: stable
+
+    - name: Install components
+      run: rustup component add --toolchain stable rustfmt clippy
+
+    - name: Install libsqlite3-dev
+      if: matrix.os == 'ubuntu-latest'
+      run: sudo apt-get install libsqlite3-dev
+
+    - name: Fetch
+      uses: actions-rs/cargo@v1
+      with:
+        command: fetch
+
+    - name: Format
+      if: matrix.os == 'ubuntu-latest'
+      uses: actions-rs/cargo@v1
+      with:
+        command: fmt
+        arguments: --all -- --check
+
+    - name: Check
+      env:
+        CARGO_INCREMENTAL: 0
+      uses: actions-rs/cargo@v1
+      with:
+        command: check
+
+    - name: Build
+      env:
+        CARGO_INCREMENTAL: 0
+      uses: actions-rs/cargo@v1
+      with:
+        command: build
+
+    - name: Clippy
+      uses: actions-rs/cargo@v1
+      env:
+        CARGO_INCREMENTAL: 0
+      with:
+        command: clippy
+        arguments: -- -D warnings
+
+    - name: Test
+      uses: actions-rs/cargo@v1
+      env:
+        CARGO_INCREMENTAL: 0
+      with:
+        command: test
