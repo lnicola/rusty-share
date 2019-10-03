@@ -13,7 +13,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest]
+        os: [ubuntu-latest, windows-latest, macOS-latest]
 
     steps:
 
@@ -42,7 +42,7 @@ jobs:
       uses: actions-rs/cargo@v1
       with:
         command: fmt
-        arguments: --all -- --check
+        args: --all -- --check
 
     - name: Check
       env:
@@ -54,9 +54,19 @@ jobs:
     - name: Build
       env:
         CARGO_INCREMENTAL: 0
+      if: matrix.os == 'ubuntu-latest'
       uses: actions-rs/cargo@v1
       with:
         command: build
+
+    - name: Build
+      env:
+        CARGO_INCREMENTAL: 0
+      if: matrix.os != 'ubuntu-latest'
+      uses: actions-rs/cargo@v1
+      with:
+        command: build
+        args: --features bundled-sqlite
 
     - name: Clippy
       uses: actions-rs/cargo@v1
@@ -64,11 +74,21 @@ jobs:
         CARGO_INCREMENTAL: 0
       with:
         command: clippy
-        arguments: -- -D warnings
+        args: -- -D warnings
 
     - name: Test
       uses: actions-rs/cargo@v1
       env:
         CARGO_INCREMENTAL: 0
+      if: matrix.os == 'ubuntu-latest'
       with:
         command: test
+
+    - name: Test
+      uses: actions-rs/cargo@v1
+      env:
+        CARGO_INCREMENTAL: 0
+      if: matrix.os != 'ubuntu-latest'
+      with:
+        command: test
+        args: --bundled-sqlite
