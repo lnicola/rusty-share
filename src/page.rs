@@ -33,14 +33,16 @@ pub fn index(
                 form(method="POST") {
                     div(class="view") {
                         p {
-                            @ if let Some(user) = user_name {
-                                : Raw("Logged in as ");
-                                : user;
-                                : Raw(" ");
-                            } else {
-                                : Raw("Browsing anonymously");
+                            @ if user_name.as_ref().map(|s| !s.is_empty()).unwrap_or_default() {
+                                @ if let Some(user) = user_name {
+                                    : Raw("Logged in as ");
+                                    : user;
+                                    : Raw(" ");
+                                } else {
+                                    : Raw("Browsing anonymously");
+                                }
+                                a(href="/login") { : Raw("login") }
                             }
-                            a(href="/login") { : Raw("login") }
                         }
                         div(class="entry header") {
                             div { }
@@ -103,14 +105,16 @@ pub fn shares(shares: &[Share], user_name: Option<String>) -> Response<Body> {
             body {
                 div(class="view") {
                     p {
-                        @ if let Some(user) = user_name {
-                            : Raw("Logged in as ");
-                            : user;
-                            : Raw(" ");
-                        } else {
-                            : Raw("Browsing anonymously ");
+                        @ if user_name.as_ref().map(|s| !s.is_empty()).unwrap_or_default() {
+                            @ if let Some(user) = user_name {
+                                : Raw("Logged in as ");
+                                : user;
+                                : Raw(" ");
+                            } else {
+                                : Raw("Browsing anonymously ");
+                            }
+                            a(href="/login") { : Raw("login") }
                         }
-                        a(href="/login") { : Raw("login") }
                     }
                     div(class="entry header share") {
                         div { : Raw("Name") }
@@ -139,6 +143,9 @@ pub fn login(message: Option<&str>) -> Response<Body> {
         html {
             head {
                 meta(name="viewport", content="width=device-width, initial-scale=1");
+                title {
+                    : Raw("Login");
+                }
                 style { : Raw(include_str!("../assets/style.css")); }
             }
             body {
