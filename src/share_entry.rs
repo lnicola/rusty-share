@@ -4,6 +4,7 @@ use crate::os_str_ext::OsStrExt;
 use bytesize::ByteSize;
 use chrono::{DateTime, Local};
 use chrono_humanize::HumanTime;
+use std::ffi::OsStr;
 use std::fs::{self, DirEntry};
 #[cfg(not(target_os = "windows"))]
 use std::os::unix::ffi::OsStrExt;
@@ -53,14 +54,9 @@ impl ShareEntry {
         }
 
         let is_dir = metadata.file_type().is_dir();
-        let mut name = value.file_name();
-        if is_dir {
-            name.push("/");
-        }
-        let link =
-            percent_encoding::percent_encode(name.as_bytes(), percent_encoding::NON_ALPHANUMERIC)
-                .to_string();
-        let name = name.to_string_lossy().into_owned();
+        let name = value.file_name();
+        let link = encode_link(&name, is_dir);
+        let name = display_name(&name, is_dir);
         let size = if !is_dir {
             ByteSize::b(metadata.len()).to_string_as(false)
         } else {
@@ -79,5 +75,43 @@ impl ShareEntry {
             date,
             date_string,
         })
+    }
+}
+
+fn display_name(name: &OsStr, is_dir: bool) -> String {
+    let mut s = name.to_string_lossy().into_owned();
+    if is_dir {
+        s.push('/');
+    }
+    s
+}
+
+fn encode_link(name: &OsStr, is_dir: bool) -> String {
+    let mut s =
+        percent_encoding::percent_encode(name.as_bytes(), percent_encoding::NON_ALPHANUMERIC)
+            .to_string();
+    if is_dir {
+        s.push('/');
+    }
+    s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{display_name, encode_link};
+    use std::ffi::OsStr;
+
+    #[test]
+    fn link_encoding() {
+        assert_eq!(encode_link(&OsStr::new("foo"), false), "foo");
+        assert_eq!(encode_link(&OsStr::new("foo bar"), false), "foo%20bar");
+        assert_eq!(encode_link(&OsStr::new("foo bar"), true), "foo%20bar/");
+    }
+
+    #[test]
+    fn friendly_names() {
+        assert_eq!(display_name(&OsStr::new("foo"), false), "foo");
+        assert_eq!(display_name(&OsStr::new("foo bar"), false), "foo bar");
+        assert_eq!(display_name(&OsStr::new("foo bar"), true), "foo bar/");
     }
 }
