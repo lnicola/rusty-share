@@ -1,13 +1,8 @@
 use crate::error::Error;
-#[cfg(target_os = "windows")]
-use crate::os_str_ext::OsStrExt;
 use bytesize::ByteSize;
 use chrono::{DateTime, Local};
 use chrono_humanize::HumanTime;
-use std::ffi::OsStr;
 use std::fs::{self, DirEntry};
-#[cfg(not(target_os = "windows"))]
-use std::os::unix::ffi::OsStrExt;
 
 #[derive(Debug)]
 pub struct ShareEntry {
@@ -54,9 +49,12 @@ impl ShareEntry {
         }
 
         let is_dir = metadata.file_type().is_dir();
-        let name = value.file_name();
+        let name = value
+            .file_name()
+            .into_string()
+            .map_err(|_| Error::invalid_filename(value.path()))?;
         let link = encode_link(&name, is_dir);
-        let display_name = display_name(&name, is_dir);
+        let display_name = display_name(name, is_dir);
         let size = if !is_dir {
             ByteSize::b(metadata.len()).to_string_as(false)
         } else {
@@ -78,15 +76,14 @@ impl ShareEntry {
     }
 }
 
-fn display_name(name: &OsStr, is_dir: bool) -> String {
-    let mut s = name.to_string_lossy().into_owned();
+fn display_name(mut name: String, is_dir: bool) -> String {
     if is_dir {
-        s.push('/');
+        name.push('/');
     }
-    s
+    name
 }
 
-fn encode_link(name: &OsStr, is_dir: bool) -> String {
+fn encode_link(name: &str, is_dir: bool) -> String {
     let mut s =
         percent_encoding::percent_encode(name.as_bytes(), percent_encoding::NON_ALPHANUMERIC)
             .to_string();
@@ -99,19 +96,18 @@ fn encode_link(name: &OsStr, is_dir: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::{display_name, encode_link};
-    use std::ffi::OsStr;
 
     #[test]
     fn link_encoding() {
-        assert_eq!(encode_link(&OsStr::new("foo"), false), "foo");
-        assert_eq!(encode_link(&OsStr::new("foo bar"), false), "foo%20bar");
-        assert_eq!(encode_link(&OsStr::new("foo bar"), true), "foo%20bar/");
+        assert_eq!(encode_link("foo", false), "foo");
+        assert_eq!(encode_link("foo bar", false), "foo%20bar");
+        assert_eq!(encode_link("foo bar", true), "foo%20bar/");
     }
 
     #[test]
     fn friendly_names() {
-        assert_eq!(display_name(&OsStr::new("foo"), false), "foo");
-        assert_eq!(display_name(&OsStr::new("foo bar"), false), "foo bar");
-        assert_eq!(display_name(&OsStr::new("foo bar"), true), "foo bar/");
+        assert_eq!(display_name(String::from("foo"), false), "foo");
+        assert_eq!(display_name(String::from("foo bar"), false), "foo bar");
+        assert_eq!(display_name(String::from("foo bar"), true), "foo bar/");
     }
 }
