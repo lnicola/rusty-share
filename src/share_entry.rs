@@ -11,7 +11,7 @@ use std::os::unix::ffi::OsStrExt;
 
 #[derive(Debug)]
 pub struct ShareEntry {
-    name: String,
+    display_name: String,
     link: String,
     is_dir: bool,
     size: String,
@@ -20,8 +20,8 @@ pub struct ShareEntry {
 }
 
 impl ShareEntry {
-    pub fn name(&self) -> &str {
-        &self.name
+    pub fn display_name(&self) -> &str {
+        &self.display_name
     }
 
     pub fn link(&self) -> &str {
@@ -56,7 +56,7 @@ impl ShareEntry {
         let is_dir = metadata.file_type().is_dir();
         let name = value.file_name();
         let link = encode_link(&name, is_dir);
-        let name = display_name(&name, is_dir);
+        let display_name = display_name(&name, is_dir);
         let size = if !is_dir {
             ByteSize::b(metadata.len()).to_string_as(false)
         } else {
@@ -68,7 +68,7 @@ impl ShareEntry {
             .into();
         let date_string = HumanTime::from(date).to_string();
         Ok(Self {
-            name,
+            display_name,
             link,
             is_dir,
             size,

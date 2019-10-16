@@ -45,7 +45,7 @@ pub fn index(entries: &[ShareEntry], user_name: Option<String>) -> Response<Body
                         @ for entry in entries {
                             div(class="entry") {
                                 input(name="s", value=entry.link(), type="checkbox");
-                                a(href=entry.link()) { : entry.name() }
+                                a(href=entry.link()) { : entry.display_name() }
                                 div { : Raw(entry.size()) }
                                 div { : Raw(entry.date_string()) }
                             }
