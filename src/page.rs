@@ -8,13 +8,25 @@ use http::header::SET_COOKIE;
 use http::{HeaderValue, Response};
 use hyper::Body;
 use log::error;
+use std::path::Path;
 
-pub fn index(entries: &[ShareEntry], user_name: Option<String>) -> Response<Body> {
+pub fn index(
+    share_name: &str,
+    path: &Path,
+    entries: &[ShareEntry],
+    user_name: Option<String>,
+) -> Response<Body> {
     let page = html! {
         : doctype::HTML;
         html {
             head {
                 meta(name="viewport", content="width=device-width, initial-scale=1");
+                title {
+                    : Raw("Index of ");
+                    : share_name;
+                    : Raw("/");
+                    : path.to_string_lossy().as_ref();
+                }
                 style { : Raw(include_str!("../assets/style.css")); }
             }
             body {
@@ -83,6 +95,9 @@ pub fn shares(shares: &[Share], user_name: Option<String>) -> Response<Body> {
         html {
             head {
                 meta(name="viewport", content="width=device-width, initial-scale=1");
+                title {
+                    : Raw("Browse shares");
+                }
                 style { : Raw(include_str!("../assets/style.css")); }
             }
             body {
