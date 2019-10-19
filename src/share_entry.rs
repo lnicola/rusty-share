@@ -1,16 +1,12 @@
 use crate::error::Error;
-#[cfg(target_os = "windows")]
-use crate::os_str_ext::OsStrExt;
 use bytesize::ByteSize;
 use chrono::{DateTime, Local};
 use chrono_humanize::HumanTime;
 use std::fs::{self, DirEntry};
-#[cfg(not(target_os = "windows"))]
-use std::os::unix::ffi::OsStrExt;
 
 #[derive(Debug)]
 pub struct ShareEntry {
-    name: String,
+    display_name: String,
     link: String,
     is_dir: bool,
     size: String,
@@ -19,8 +15,8 @@ pub struct ShareEntry {
 }
 
 impl ShareEntry {
-    pub fn name(&self) -> &str {
-        &self.name
+    pub fn display_name(&self) -> &str {
+        &self.display_name
     }
 
     pub fn link(&self) -> &str {
@@ -53,14 +49,12 @@ impl ShareEntry {
         }
 
         let is_dir = metadata.file_type().is_dir();
-        let mut name = value.file_name();
-        if is_dir {
-            name.push("/");
-        }
-        let link =
-            percent_encoding::percent_encode(name.as_bytes(), percent_encoding::NON_ALPHANUMERIC)
-                .to_string();
-        let name = name.to_string_lossy().into_owned();
+        let name = value
+            .file_name()
+            .into_string()
+            .map_err(|_| Error::invalid_filename(value.path()))?;
+        let link = encode_link(&name, is_dir);
+        let display_name = display_name(name, is_dir);
         let size = if !is_dir {
             ByteSize::b(metadata.len()).to_string_as(false)
         } else {
@@ -72,12 +66,48 @@ impl ShareEntry {
             .into();
         let date_string = HumanTime::from(date).to_string();
         Ok(Self {
-            name,
+            display_name,
             link,
             is_dir,
             size,
             date,
             date_string,
         })
+    }
+}
+
+fn display_name(mut name: String, is_dir: bool) -> String {
+    if is_dir {
+        name.push('/');
+    }
+    name
+}
+
+fn encode_link(name: &str, is_dir: bool) -> String {
+    let mut s =
+        percent_encoding::percent_encode(name.as_bytes(), percent_encoding::NON_ALPHANUMERIC)
+            .to_string();
+    if is_dir {
+        s.push('/');
+    }
+    s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{display_name, encode_link};
+
+    #[test]
+    fn link_encoding() {
+        assert_eq!(encode_link("foo", false), "foo");
+        assert_eq!(encode_link("foo bar", false), "foo%20bar");
+        assert_eq!(encode_link("foo bar", true), "foo%20bar/");
+    }
+
+    #[test]
+    fn friendly_names() {
+        assert_eq!(display_name(String::from("foo"), false), "foo");
+        assert_eq!(display_name(String::from("foo bar"), false), "foo bar");
+        assert_eq!(display_name(String::from("foo bar"), true), "foo bar/");
     }
 }

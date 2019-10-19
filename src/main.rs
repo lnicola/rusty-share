@@ -255,7 +255,7 @@ impl RustyShare {
                 });
             match pb {
                 Ok(pb) => {
-                    let share = pb
+                    let share_name = pb
                         .components()
                         .next()
                         .unwrap()
@@ -275,7 +275,7 @@ impl RustyShare {
                                 "{} {} /browse/{}/{}",
                                 name,
                                 parts.method,
-                                share,
+                                share_name,
                                 path.display()
                             );
                             (Some(user_id), Some(name))
@@ -284,23 +284,25 @@ impl RustyShare {
                             info!(
                                 "anonymous {} /browse/{}/{}",
                                 parts.method,
-                                share,
+                                share_name,
                                 path.display()
                             );
                             (None, None)
                         }
                     };
 
-                    let share = Self::lookup_share(root, &store, &share, user_id);
-                    match share {
-                        Ok(share) => {
+                    match Self::lookup_share(root, &store, &share_name, user_id) {
+                        Ok(share_path) => {
                             if parts.method == Method::GET {
                                 let request = request_from_parts(&parts);
-                                let res = RustyShare::browse(share, path, request, user_name);
+                                let res = RustyShare::browse(
+                                    share_name, share_path, path, request, user_name,
+                                );
                                 Either3::C(res)
                             } else {
-                                let fut = files_from_body(body)
-                                    .and_then(move |files| RustyShare::archive(share, path, files));
+                                let fut = files_from_body(body).and_then(move |files| {
+                                    RustyShare::archive(share_path, path, files)
+                                });
                                 Either3::B(fut)
                             }
                         }
@@ -378,6 +380,7 @@ impl RustyShare {
     }
 
     fn browse(
+        share_name: String,
         share: PathBuf,
         path: PathBuf,
         request: Request<()>,
@@ -393,9 +396,10 @@ impl RustyShare {
                         if !uri_path.ends_with('/') {
                             Either3::A(future::ok(response::found(&(uri_path + "/"))))
                         } else {
-                            let fut =
-                                BlockingFuture::new(move || render_index(&disk_path, user_name))
-                                    .map_err(|_| unreachable!());
+                            let fut = BlockingFuture::new(move || {
+                                render_index(&share_name, &path, &disk_path, user_name)
+                            })
+                            .map_err(|_| unreachable!());
                             Either3::B(fut)
                         }
                     } else {
@@ -661,13 +665,18 @@ pub fn is_hidden(path: &OsStr) -> bool {
     path.as_bytes().starts_with(b".")
 }
 
-fn render_index(path: &Path, user_name: Option<String>) -> Response {
+fn render_index(
+    share_name: &str,
+    relative_path: &Path,
+    path: &Path,
+    user_name: Option<String>,
+) -> Response {
     let enumerate_start = Instant::now();
     match get_dir_entries(&path) {
         Ok(entries) => {
             let render_start = Instant::now();
             let enumerate_time = render_start - enumerate_start;
-            let rendered = page::index(&entries, user_name);
+            let rendered = page::index(share_name, &relative_path, &entries, user_name);
             let render_time = Instant::now() - render_start;
             info!(
                 "enumerate: {} ms, render: {} ms",

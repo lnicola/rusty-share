@@ -8,6 +8,9 @@ use walkdir;
 
 #[derive(Debug)]
 pub enum Error {
+    InvalidFilename {
+        path: PathBuf,
+    },
     Io {
         cause: io::Error,
         path: Option<PathBuf>,
@@ -38,6 +41,10 @@ pub enum Error {
 }
 
 impl Error {
+    pub fn invalid_filename(path: PathBuf) -> Self {
+        Error::InvalidFilename { path }
+    }
+
     pub fn from_io(cause: io::Error, path: PathBuf) -> Self {
         Error::Io {
             cause,
@@ -87,6 +94,7 @@ impl From<diesel::r2d2::PoolError> for Error {
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            Error::InvalidFilename { path } => write!(f, "invalid filename {}", path.display()),
             Error::Io { cause, path: None } => cause.fmt(f),
             Error::Io {
                 cause,
