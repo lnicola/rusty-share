@@ -42,10 +42,9 @@ impl ShareEntry {
     pub fn try_from(value: &DirEntry) -> Result<Self, Error> {
         let mut metadata = value
             .metadata()
-            .map_err(|e| Error::from_io(e, value.path().to_path_buf()))?;
+            .map_err(|e| Error::from_io(e, value.path()))?;
         if metadata.file_type().is_symlink() {
-            metadata = fs::metadata(value.path())
-                .map_err(|e| Error::from_io(e, value.path().to_path_buf()))?;
+            metadata = fs::metadata(value.path()).map_err(|e| Error::from_io(e, value.path()))?;
         }
 
         let is_dir = metadata.file_type().is_dir();
@@ -62,7 +61,7 @@ impl ShareEntry {
         };
         let date = metadata
             .modified()
-            .map_err(|e| Error::from_io(e, value.path().to_path_buf()))?
+            .map_err(|e| Error::from_io(e, value.path()))?
             .into();
         let date_string = HumanTime::from(date).to_string();
         Ok(Self {

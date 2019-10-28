@@ -176,7 +176,7 @@ impl RustyShare {
                 .ok_or_else(response::not_found)?;
             Ok(path)
         } else if name == "public" {
-            Ok(root.clone())
+            Ok(root)
         } else {
             Err(response::not_found())
         }
