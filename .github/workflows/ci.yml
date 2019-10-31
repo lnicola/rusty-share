@@ -44,6 +44,13 @@ jobs:
         command: fmt
         args: --all -- --check
 
+    - name: Check
+      env:
+        CARGO_INCREMENTAL: 0
+      uses: actions-rs/cargo@v1
+      with:
+        command: check
+
     - name: Clippy
       uses: actions-rs/cargo@v1
       env:
@@ -51,13 +58,6 @@ jobs:
       with:
         command: clippy
         args: -- -D warnings
-
-    - name: Check
-      env:
-        CARGO_INCREMENTAL: 0
-      uses: actions-rs/cargo@v1
-      with:
-        command: check
 
     - name: Build
       env:
