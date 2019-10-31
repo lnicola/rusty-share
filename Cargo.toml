@@ -44,8 +44,3 @@ default = ["bundled-windows"]
 
 bundled-sqlite = ["libsqlite3-sys/bundled"]
 bundled-windows = ["libsqlite3-sys/bundled-windows"]
-
-[profile.release]
-codegen-units = 1
-incremental = false
-lto = true
