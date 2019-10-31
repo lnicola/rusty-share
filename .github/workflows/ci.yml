@@ -62,33 +62,13 @@ jobs:
     - name: Build
       env:
         CARGO_INCREMENTAL: 0
-      if: matrix.os != 'windows-latest'
       uses: actions-rs/cargo@v1
       with:
         command: build
-
-    - name: Build
-      env:
-        CARGO_INCREMENTAL: 0
-      if: matrix.os == 'windows-latest'
-      uses: actions-rs/cargo@v1
-      with:
-        command: build
-        args: --features bundled-sqlite
 
     - name: Test
       uses: actions-rs/cargo@v1
       env:
         CARGO_INCREMENTAL: 0
-      if: matrix.os != 'windows-latest'
       with:
         command: test
-
-    - name: Test
-      uses: actions-rs/cargo@v1
-      env:
-        CARGO_INCREMENTAL: 0
-      if: matrix.os == 'windows-latest'
-      with:
-        command: test
-        args: --features bundled-sqlite

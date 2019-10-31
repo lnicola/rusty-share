@@ -40,7 +40,10 @@ url = "2.1"
 walkdir = "2.2"
 
 [features]
+default = ["bundled-windows"]
+
 bundled-sqlite = ["libsqlite3-sys/bundled"]
+bundled-windows = ["libsqlite3-sys/bundled-windows"]
 
 [profile.release]
 codegen-units = 1
