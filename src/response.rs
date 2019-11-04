@@ -30,6 +30,14 @@ pub fn login_ok(session_id: String, redirect: &str) -> Response<Body> {
         .unwrap()
 }
 
+pub fn register_ok(redirect: &str) -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::FOUND)
+        .header(LOCATION, HeaderValue::from_str(redirect).unwrap())
+        .body(Body::empty())
+        .unwrap()
+}
+
 pub fn login_redirect(path: &Uri, destroy_session: bool) -> Response<Body> {
     let path = path.path_and_query().map(|p| p.as_str()).unwrap_or("/");
     let path =

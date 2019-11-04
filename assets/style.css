@@ -17,7 +17,8 @@ body {
     display: none;
 }
 
-.login-page {
+.login-page,
+.register-page {
     width: 21rem;
     padding: 8% 0 0;
     margin: auto;

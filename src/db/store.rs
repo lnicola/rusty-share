@@ -44,6 +44,13 @@ impl SqliteStore {
         self::last_inserted_row_id(&conn)
     }
 
+    pub fn users_exist(&self) -> DbResult<bool> {
+        let conn = self.0.get()?;
+        let r = diesel::select(diesel::dsl::exists(users::table.select(users::all_columns)))
+            .get_result(&conn)?;
+        Ok(r)
+    }
+
     pub fn update_password_by_id(&self, user_id: i32, password: &str) -> DbResult<usize> {
         let conn = self.0.get()?;
         let count = diesel::update(users::table.find(user_id))
