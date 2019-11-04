@@ -105,12 +105,14 @@ fn get_archive_name(path_: &Path, files: &[PathBuf], single_dir: bool) -> String
 struct LoginForm {
     user: String,
     pass: String,
+    confirm_pass: String
 }
 
 impl LoginForm {
     pub fn from_bytes<T: AsRef<[u8]>>(input: T) -> Self {
         let mut user = String::new();
         let mut pass = String::new();
+
         for p in form_urlencoded::parse(input.as_ref()) {
             if p.0 == "user" {
                 user = p.1.into_owned();
@@ -119,6 +121,35 @@ impl LoginForm {
             }
         }
         Self { user, pass }
+    }
+
+    fn from_body(body: Body) -> impl Future<Item = Self, Error = Error> {
+        vec_from_body(body).map(Self::from_bytes)
+    }
+}
+
+struct RegisterForm {
+    user: String,
+    pass: String,
+    confirm_pass: String,
+}
+
+impl RegisterForm {
+    pub fn from_bytes<T: AsRef<[u8]>>(input: T) -> Self {
+        let mut user = String::new();
+        let mut pass = String::new();
+        let mut confirm_pass = String::new();
+
+        for p in form_urlencoded::parse(input.as_ref()) {
+            if p.0 == "user" {
+                user = p.1.into_owned();
+            } else if p.0 == "pass" {
+                pass = p.1.into_owned();
+            } else if p.0 == "confirm_pass" {
+                confirm_pass = p.1.into_owned();
+            }
+        }
+        Self { user, pass, confirm_pass }
     }
 
     fn from_body(body: Body) -> impl Future<Item = Self, Error = Error> {
@@ -227,6 +258,42 @@ impl RustyShare {
                     .and_then(|form| Self::login_action(store, redirect, &form.user, &form.pass))
             };
             Box::new(fut)
+        }
+    }
+
+    fn register(&self, parts: Parts, body: Body) -> BoxedFuture<Response, Error> {
+        let store = self.store.clone();
+        if let Some(store) = store {
+            let fut = RegisterForm::from_body(body).map(move |form| {
+                if &form.pass != &form.confirm_pass {
+                    page::register(Some("Registering failed. Passwords doesn't match."))
+                } else {
+                    let exists = store.users_exist();
+                    match exists {
+                        Ok(exists) => {
+                            if exists {
+                                response::not_found()
+                            } else if parts.method == Method::GET {
+                                page::register(None)
+                            } else {
+                                Self::register_action(store, &form.user, &form.pass)
+                            }
+                        }
+                        Err(_) => response::internal_server_error(),
+                    }
+                }
+            });
+            Box::new(fut)
+        } else {
+            Box::new(future::ok(response::not_found()))
+        }
+    }
+       
+    fn register_user(&self, parts: Parts, user: &str, pass: &str) -> Response {
+        if parts.method == Method::GET {
+            self.register_page()
+        } else {
+            Box::new(future::ok(response::not_found()))
         }
     }
 
@@ -353,6 +420,14 @@ impl RustyShare {
         }
     }
 
+    fn register_action(store: SqliteStore, user: &str, pass: &str) -> Response {
+        let user_id = register_user(&store, user, pass);
+        match user_id {
+            Ok(_) => response::register_ok("/login"),
+            Err(_) => page::register(Some("Registration failed.")),
+        }
+    }
+
     fn browse_shares(&self, parts: Parts) -> BoxedFuture<Response, Error> {
         let store = self.store.clone();
         let store_ = self.store.clone();
@@ -473,6 +548,9 @@ impl RustyShare {
         let (parts, body) = req.into_parts();
         match (&parts.method, parts.uri.path()) {
             (&Method::GET, "/") => self.index(),
+            (&Method::GET, "/register") | (&Method::POST, "/register") => {
+                self.register(parts, body)
+            }
             (&Method::GET, "/login") | (&Method::POST, "/login") => self.login(parts, body),
             (&Method::GET, "/favicon.ico") => self.favicon(),
             (&Method::GET, "/browse/") => self.browse_shares(parts),
