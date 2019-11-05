@@ -449,8 +449,6 @@ impl RustyShare {
                 let archive_size = archive.size();
                 let body = get_archive(archive);
                 response::archive(archive_size, body, &archive_name)
-                // let body = get_archive(archive);
-                // response::archive(archive_size, body, &archive_name)
             };
             Ok(response)
         });
