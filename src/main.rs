@@ -7,7 +7,6 @@ use archive::Archive;
 use authentication::Authentication;
 use blocking_future::{BlockingFuture, BlockingFutureTry};
 use db::{Conn, Store};
-use db_store::DbStore;
 use diesel::r2d2::{self, ConnectionManager};
 use diesel::sqlite::SqliteConnection;
 use diesel::QueryResult;
@@ -51,7 +50,6 @@ mod archive;
 mod authentication;
 mod blocking_future;
 mod db;
-mod db_store;
 mod error;
 mod options;
 mod os_str_ext;
@@ -161,11 +159,11 @@ fn vec_from_body(body: Body) -> impl Future<Item = Vec<u8>, Error = Error> {
 impl RustyShare {
     fn lookup_share(
         root: PathBuf,
-        store: &DbStore,
+        store: &Option<Store>,
         name: &str,
         user_id: Option<i32>,
     ) -> Result<PathBuf, Response> {
-        if let Some(ref store) = store.0 {
+        if let Some(store) = store {
             let path = store
                 .lookup_share(name, user_id)
                 .map_err(|e| {
@@ -181,8 +179,8 @@ impl RustyShare {
         }
     }
 
-    fn get_shares(store: &DbStore, user_id: Option<i32>) -> Result<Vec<Share>, Response> {
-        if let Some(ref store) = store.0 {
+    fn get_shares(store: &Option<Store>, user_id: Option<i32>) -> Result<Vec<Share>, Response> {
+        if let Some(store) = store {
             let shares = store
                 .get_share_names(user_id)
                 .map_err(|e| {
@@ -316,8 +314,13 @@ impl RustyShare {
         })
     }
 
-    fn login_action(store: DbStore, redirect: Option<String>, user: &str, pass: &str) -> Response {
-        if let Some(ref store) = store.0 {
+    fn login_action(
+        store: Option<Store>,
+        redirect: Option<String>,
+        user: &str,
+        pass: &str,
+    ) -> Response {
+        if let Some(store) = store {
             let redirect = redirect.unwrap_or_else(|| String::from("/browse/"));
 
             let session = authenticate(&store, user, pass).unwrap();
@@ -358,15 +361,24 @@ impl RustyShare {
         Box::new(fut)
     }
 
-    fn get_db(&self) -> impl Future<Item = DbStore, Error = Error> {
+    fn get_db(&self) -> impl Future<Item = Option<Store>, Error = Error> {
         let pool = self.pool.clone();
-        BlockingFutureTry::new(move || DbStore::extract(&pool)).map_err(|e| {
+        BlockingFutureTry::new(move || {
+            let store = pool
+                .as_ref()
+                .map(|pool| pool.get())
+                .transpose()?
+                .map(Conn::new)
+                .map(Store::new);
+            Ok(store)
+        })
+        .map_err(|e| {
             error!("{}", e);
             e
         })
     }
 
-    fn get_authentication(store: &DbStore, parts: &Parts) -> Authentication {
+    fn get_authentication(store: &Option<Store>, parts: &Parts) -> Authentication {
         Authentication::extract(store, &parts.uri, parts.headers.typed_get::<Cookie>())
     }
 
