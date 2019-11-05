@@ -11,7 +11,6 @@ use db_store::DbStore;
 use diesel::r2d2::{self, ConnectionManager};
 use diesel::sqlite::SqliteConnection;
 use diesel::QueryResult;
-use either::{Either2, Either3, Either6};
 use error::Error;
 use futures::{future, Future, Stream};
 use headers::{Cookie, HeaderMapExt};
@@ -53,7 +52,6 @@ mod authentication;
 mod blocking_future;
 mod db;
 mod db_store;
-mod either;
 mod error;
 mod options;
 mod os_str_ext;
@@ -66,6 +64,7 @@ mod share_entry;
 
 type Pool = r2d2::Pool<ConnectionManager<SqliteConnection>>;
 type Response = http::Response<Body>;
+type BoxedFuture<T, E> = Box<dyn Future<Item = T, Error = E> + Send>;
 
 struct RustyShare {
     root: PathBuf,
@@ -199,17 +198,17 @@ impl RustyShare {
         }
     }
 
-    fn index(&self) -> impl Future<Item = Response, Error = Error> {
-        future::ok(response::found("/browse/"))
+    fn index(&self) -> BoxedFuture<Response, Error> {
+        Box::new(future::ok(response::found("/browse/")))
     }
 
-    fn favicon(&self) -> impl Future<Item = Response, Error = Error> {
-        future::ok(response::not_found())
+    fn favicon(&self) -> BoxedFuture<Response, Error> {
+        Box::new(future::ok(response::not_found()))
     }
 
-    fn login(&self, parts: Parts, body: Body) -> impl Future<Item = Response, Error = Error> {
+    fn login(&self, parts: Parts, body: Body) -> BoxedFuture<Response, Error> {
         if parts.method == Method::GET {
-            Either2::A(self.login_page())
+            self.login_page()
         } else {
             let fut = self.get_db().and_then(move |store| {
                 let redirect = form_urlencoded::parse(parts.uri.query().unwrap_or("").as_bytes())
@@ -224,20 +223,14 @@ impl RustyShare {
                 LoginForm::from_body(body)
                     .map(|form| Self::login_action(store, redirect, &form.user, &form.pass))
             });
-            Either2::B(fut)
+            Box::new(fut)
         }
-        .map(|r| r.into_inner())
     }
 
-    fn browse_or_archive(
-        &self,
-        parts: Parts,
-        body: Body,
-    ) -> impl Future<Item = Response, Error = Error> {
+    fn browse_or_archive(&self, parts: Parts, body: Body) -> BoxedFuture<Response, Error> {
         let root = self.root.clone();
-        self.get_db().and_then(move |store| {
+        let fut = self.get_db().and_then(move |store| {
             let authentication = Self::get_authentication(&store, &parts);
-
             let pb = decode(parts.uri.path())
                 .map(|s| {
                     PathBuf::from(s)
@@ -295,35 +288,32 @@ impl RustyShare {
                         Ok(share_path) => {
                             if parts.method == Method::GET {
                                 let request = request_from_parts(&parts);
-                                let res = RustyShare::browse(
-                                    share_name, share_path, path, request, user_name,
-                                );
-                                Either3::C(res)
+                                RustyShare::browse(share_name, share_path, path, request, user_name)
                             } else {
                                 let fut = files_from_body(body).and_then(move |files| {
                                     RustyShare::archive(share_path, path, files)
                                 });
-                                Either3::B(fut)
+                                Box::new(fut)
                             }
                         }
-                        Err(res) => Either3::A(future::ok(res)),
+                        Err(res) => Box::new(future::ok(res)),
                     }
                 }
                 Err(e) => {
                     error!("{}", e);
-                    Either3::A(future::ok(response::bad_request()))
+                    Box::new(future::ok(response::bad_request()))
                 }
             }
-            .map(|r| r.into_inner())
-        })
+        });
+        Box::new(fut)
     }
 
-    fn login_page(&self) -> impl Future<Item = Response, Error = Error> {
-        if self.pool.is_some() {
+    fn login_page(&self) -> BoxedFuture<Response, Error> {
+        Box::new(if self.pool.is_some() {
             future::ok(page::login(None))
         } else {
             future::ok(response::not_found())
-        }
+        })
     }
 
     fn login_action(store: DbStore, redirect: Option<String>, user: &str, pass: &str) -> Response {
@@ -345,8 +335,8 @@ impl RustyShare {
         }
     }
 
-    fn browse_shares(&self, parts: Parts) -> impl Future<Item = Response, Error = Error> {
-        self.get_db().map(move |store| {
+    fn browse_shares(&self, parts: Parts) -> BoxedFuture<Response, Error> {
+        let fut = self.get_db().map(move |store| {
             let authentication = Self::get_authentication(&store, &parts);
             match authentication {
                 Authentication::User(user_id, name) => {
@@ -364,7 +354,8 @@ impl RustyShare {
                     }
                 }
             }
-        })
+        });
+        Box::new(fut)
     }
 
     fn get_db(&self) -> impl Future<Item = DbStore, Error = Error> {
@@ -385,53 +376,48 @@ impl RustyShare {
         path: PathBuf,
         request: Request<()>,
         user_name: Option<String>,
-    ) -> impl Future<Item = Response, Error = Error> {
+    ) -> BoxedFuture<Response, Error> {
         let disk_path = share.join(&path);
         let uri_path = request.uri().path().to_string();
 
-        tokio_fs::metadata(disk_path.clone())
-            .then(|metadata| match metadata {
-                Ok(metadata) => {
-                    if metadata.is_dir() {
-                        if !uri_path.ends_with('/') {
-                            Either3::A(future::ok(response::found(&(uri_path + "/"))))
-                        } else {
-                            let fut = BlockingFuture::new(move || {
-                                render_index(&share_name, &path, &disk_path, user_name)
-                            })
-                            .map_err(|_| unreachable!());
-                            Either3::B(fut)
-                        }
+        let fut = tokio_fs::metadata(disk_path.clone()).then(|metadata| match metadata {
+            Ok(metadata) => {
+                if metadata.is_dir() {
+                    if !uri_path.ends_with('/') {
+                        Box::new(future::ok(response::found(&(uri_path + "/"))))
                     } else {
-                        let mut headers = HeaderMap::new();
-                        if let Some(mime) = mime_guess::from_path(&disk_path).first_raw() {
-                            headers.insert(CONTENT_TYPE, HeaderValue::from_static(mime));
-                        }
-                        let fut = BlockingFutureTry::new(move || {
-                            File::open(&disk_path)
-                                .and_then(|file| ChunkedReadFile::new(file, None, headers))
-                                .map_err(|e| Error::from_io(e, disk_path))
+                        let fut = BlockingFuture::new(move || {
+                            render_index(&share_name, &path, &disk_path, user_name)
                         })
-                        .map(move |crf| http_serve::serve(crf, &request));
-
-                        Either3::C(fut)
+                        .map_err(|_| Error::StreamCancelled); // FIXME: !
+                        Box::new(fut) as BoxedFuture<Response, Error>
                     }
+                } else {
+                    let mut headers = HeaderMap::new();
+                    if let Some(mime) = mime_guess::from_path(&disk_path).first_raw() {
+                        headers.insert(CONTENT_TYPE, HeaderValue::from_static(mime));
+                    }
+                    let fut = BlockingFutureTry::new(move || {
+                        File::open(&disk_path)
+                            .and_then(|file| ChunkedReadFile::new(file, None, headers))
+                            .map_err(|e| Error::from_io(e, disk_path))
+                    })
+                    .map(move |crf| http_serve::serve(crf, &request));
+
+                    Box::new(fut)
                 }
-                Err(e) => {
-                    error!("{}", Error::from_io(e, disk_path));
-                    Either3::A(future::ok(response::not_found()))
-                }
-            })
-            .map(|r| r.into_inner())
+            }
+            Err(e) => {
+                error!("{}", Error::from_io(e, disk_path));
+                Box::new(future::ok(response::not_found()))
+            }
+        });
+        Box::new(fut)
     }
 
-    fn archive(
-        share: PathBuf,
-        path: PathBuf,
-        files: Vec<String>,
-    ) -> impl Future<Item = Response, Error = Error> {
+    fn archive(share: PathBuf, path: PathBuf, files: Vec<String>) -> BoxedFuture<Response, Error> {
         let disk_path = share.join(&path);
-        BlockingFutureTry::new(move || {
+        let fut = BlockingFutureTry::new(move || {
             let mut files = files.iter().map(PathBuf::from).collect::<Vec<_>>();
             if files.is_empty() {
                 for entry in dir_entries(&disk_path)? {
@@ -467,38 +453,22 @@ impl RustyShare {
                 // response::archive(archive_size, body, &archive_name)
             };
             Ok(response)
-        })
+        });
+        Box::new(fut)
     }
 
-    pub fn handle_request(
-        &self,
-        req: Request<Body>,
-    ) -> impl Future<Item = Response, Error = Error> {
+    pub fn handle_request(&self, req: Request<Body>) -> BoxedFuture<Response, Error> {
         let (parts, body) = req.into_parts();
         match (&parts.method, parts.uri.path()) {
-            (&Method::GET, "/") => {
-                let res = self.index();
-                Either6::C(res)
-            }
-            (&Method::GET, "/login") | (&Method::POST, "/login") => {
-                let res = self.login(parts, body);
-                Either6::E(res)
-            }
-            (&Method::GET, "/favicon.ico") => {
-                let res = self.favicon();
-                Either6::F(res)
-            }
-            (&Method::GET, "/browse/") => {
-                let fut = self.browse_shares(parts);
-                Either6::B(fut)
-            }
+            (&Method::GET, "/") => self.index(),
+            (&Method::GET, "/login") | (&Method::POST, "/login") => self.login(parts, body),
+            (&Method::GET, "/favicon.ico") => self.favicon(),
+            (&Method::GET, "/browse/") => self.browse_shares(parts),
             (&Method::GET, path) | (&Method::POST, path) if path.starts_with("/browse/") => {
-                let fut = self.browse_or_archive(parts, body);
-                Either6::D(fut)
+                self.browse_or_archive(parts, body)
             }
-            _ => Either6::A(future::ok(response::bad_request())),
+            _ => Box::new(future::ok(response::bad_request())),
         }
-        .map(|r| r.into_inner())
     }
 }
 
