@@ -1,6 +1,6 @@
 use super::models::{AccessLevel, User};
 use super::schema::{sessions, shares, user_shares, users};
-use super::Conn;
+use diesel::r2d2::{ConnectionManager, PooledConnection};
 use diesel::result::Error;
 use diesel::sql_types::{Integer, Nullable};
 use diesel::{
@@ -10,11 +10,19 @@ use diesel::{
 };
 use std::path::PathBuf;
 
-pub struct Store(Conn);
+type Conn = PooledConnection<ConnectionManager<SqliteConnection>>;
 
-impl Store {
+pub struct SqliteStore(Conn);
+
+no_arg_sql_function!(last_insert_rowid, Integer);
+
+pub fn last_inserted_row_id(connection: &SqliteConnection) -> QueryResult<i32> {
+    diesel::select(last_insert_rowid).get_result(connection)
+}
+
+impl SqliteStore {
     pub fn new(connection: Conn) -> Self {
-        Store(connection)
+        Self(connection)
     }
 
     pub fn initialize_database(&self) -> QueryResult<()> {
@@ -29,7 +37,7 @@ impl Store {
         diesel::insert_into(users::table)
             .values((users::name.eq(name), users::password.eq(password)))
             .execute(self.connection())?;
-        super::last_inserted_row_id(self.connection())
+        self::last_inserted_row_id(self.connection())
     }
 
     pub fn update_password_by_id(&self, user_id: i32, password: &str) -> QueryResult<usize> {
@@ -134,7 +142,7 @@ impl Store {
                 shares::access_level.eq(AccessLevel::Authenticated as i32),
             ))
             .execute(self.connection())?;
-        super::last_inserted_row_id(self.connection())
+        self::last_inserted_row_id(self.connection())
     }
 
     pub fn transaction<T, E, F>(&self, f: F) -> Result<T, E>

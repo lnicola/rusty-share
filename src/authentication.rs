@@ -1,4 +1,4 @@
-use crate::db::Store;
+use crate::db::SqliteStore;
 use crate::response;
 use crate::Response;
 use headers::Cookie;
@@ -11,7 +11,7 @@ pub enum Authentication {
 }
 
 fn check_session(
-    store: &Option<Store>,
+    store: &Option<SqliteStore>,
     uri: &Uri,
     cookie: Option<Cookie>,
 ) -> Result<(i32, String), Response> {
@@ -37,7 +37,7 @@ fn check_session(
 }
 
 impl Authentication {
-    pub fn extract(store: &Option<Store>, uri: &Uri, cookie: Option<Cookie>) -> Self {
+    pub fn extract(store: &Option<SqliteStore>, uri: &Uri, cookie: Option<Cookie>) -> Self {
         match check_session(&store, uri, cookie) {
             Ok((user_id, name)) => Authentication::User(user_id, name),
             Err(response) => Authentication::Error(response),

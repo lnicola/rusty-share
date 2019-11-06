@@ -6,7 +6,7 @@ extern crate diesel;
 use archive::Archive;
 use authentication::Authentication;
 use blocking_future::{BlockingFuture, BlockingFutureTry};
-use db::{Conn, Store};
+use db::SqliteStore;
 use diesel::r2d2::{self, ConnectionManager};
 use diesel::sqlite::SqliteConnection;
 use diesel::QueryResult;
@@ -159,7 +159,7 @@ fn vec_from_body(body: Body) -> impl Future<Item = Vec<u8>, Error = Error> {
 impl RustyShare {
     fn lookup_share(
         root: PathBuf,
-        store: &Option<Store>,
+        store: &Option<SqliteStore>,
         name: &str,
         user_id: Option<i32>,
     ) -> Result<PathBuf, Response> {
@@ -179,7 +179,10 @@ impl RustyShare {
         }
     }
 
-    fn get_shares(store: &Option<Store>, user_id: Option<i32>) -> Result<Vec<Share>, Response> {
+    fn get_shares(
+        store: &Option<SqliteStore>,
+        user_id: Option<i32>,
+    ) -> Result<Vec<Share>, Response> {
         if let Some(store) = store {
             let shares = store
                 .get_share_names(user_id)
@@ -315,7 +318,7 @@ impl RustyShare {
     }
 
     fn login_action(
-        store: Option<Store>,
+        store: Option<SqliteStore>,
         redirect: Option<String>,
         user: &str,
         pass: &str,
@@ -361,15 +364,14 @@ impl RustyShare {
         Box::new(fut)
     }
 
-    fn get_db(&self) -> impl Future<Item = Option<Store>, Error = Error> {
+    fn get_db(&self) -> impl Future<Item = Option<SqliteStore>, Error = Error> {
         let pool = self.pool.clone();
         BlockingFutureTry::new(move || {
             let store = pool
                 .as_ref()
                 .map(|pool| pool.get())
                 .transpose()?
-                .map(Conn::new)
-                .map(Store::new);
+                .map(SqliteStore::new);
             Ok(store)
         })
         .map_err(|e| {
@@ -378,7 +380,7 @@ impl RustyShare {
         })
     }
 
-    fn get_authentication(store: &Option<Store>, parts: &Parts) -> Authentication {
+    fn get_authentication(store: &Option<SqliteStore>, parts: &Parts) -> Authentication {
         Authentication::extract(store, &parts.uri, parts.headers.typed_get::<Cookie>())
     }
 
@@ -492,8 +494,7 @@ fn run() -> Result<(), Error> {
         let manager = ConnectionManager::<SqliteConnection>::new(db.clone());
         let pool_ = Pool::builder().build(manager).expect("db pool");
 
-        let conn = Conn::new(pool_.get().unwrap());
-        let store = Store::new(conn);
+        let store = SqliteStore::new(pool_.get().unwrap());
         pool = Some(pool_);
 
         if should_initialize {
@@ -672,24 +673,28 @@ fn render_index(
     }
 }
 
-pub fn register_user(store: &Store, name: &str, password: &str) -> Result<i32, Error> {
+pub fn register_user(store: &SqliteStore, name: &str, password: &str) -> Result<i32, Error> {
     let hash = scrypt_simple::scrypt_simple(password, 15, 8, 1)?;
     let user_id = store.insert_user(name, &hash)?;
     Ok(user_id)
 }
 
-pub fn reset_password(store: &Store, name: &str, password: &str) -> Result<(), Error> {
+pub fn reset_password(store: &SqliteStore, name: &str, password: &str) -> Result<(), Error> {
     let hash = scrypt_simple::scrypt_simple(password, 15, 8, 1)?;
     store.update_password_by_name(name, &hash)?;
     Ok(())
 }
 
-pub fn create_share(store: &Store, name: &str, path: &str) -> Result<(), Error> {
+pub fn create_share(store: &SqliteStore, name: &str, path: &str) -> Result<(), Error> {
     store.create_share(name, &path)?;
     Ok(())
 }
 
-pub fn authenticate(store: &Store, name: &str, password: &str) -> QueryResult<Option<[u8; 16]>> {
+pub fn authenticate(
+    store: &SqliteStore,
+    name: &str,
+    password: &str,
+) -> QueryResult<Option<[u8; 16]>> {
     let user = store
         .find_user(name)?
         .and_then(|user| {
