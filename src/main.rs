@@ -21,7 +21,6 @@ use hyper::{Body, Server};
 use log::{error, info};
 use mime_guess;
 use options::{Command, Options};
-use os_str_ext::OsStrExt;
 use pipe::Pipe;
 use pretty_env_logger;
 use rand::{self, Rng};
@@ -50,7 +49,6 @@ mod blocking_future;
 mod db;
 mod error;
 mod options;
-mod os_str_ext;
 mod page;
 mod pipe;
 mod response;
@@ -641,7 +639,7 @@ fn get_dir_entries(path: &Path) -> Result<Vec<ShareEntry>, Error> {
 }
 
 pub fn is_hidden(path: &OsStr) -> bool {
-    path.as_bytes().starts_with(b".")
+    path.to_string_lossy().starts_with('.')
 }
 
 fn render_index(
