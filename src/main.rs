@@ -475,7 +475,7 @@ impl RustyShare {
             (&Method::GET, path) | (&Method::POST, path) if path.starts_with("/browse/") => {
                 self.browse_or_archive(parts, body)
             }
-            _ => Box::new(future::ok(response::bad_request())),
+            _ => Box::new(future::ok(response::not_found())),
         }
     }
 }
