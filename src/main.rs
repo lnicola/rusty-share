@@ -140,7 +140,7 @@ fn files_from_body(body: Body) -> impl Future<Item = Vec<String>, Error = Error>
             .filter_map(|p| {
                 if p.0 == "s" {
                     let percent_decoded =
-                        Cow::from(percent_encoding::percent_decode(p.1.as_bytes()));
+                        Cow::from(percent_encoding::percent_decode_str(p.1.as_ref()));
                     String::from_utf8(percent_decoded.into_owned()).ok()
                 } else {
                     None
