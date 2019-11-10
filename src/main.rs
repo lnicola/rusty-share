@@ -178,20 +178,25 @@ impl RustyShare {
     fn get_shares(
         store: &Option<SqliteStore>,
         user_id: Option<i32>,
-    ) -> Result<Vec<Share>, Response> {
+    ) -> BoxedFuture<Vec<Share>, Response> {
+        let store = store.clone();
         if let Some(store) = store {
-            let shares = store
-                .get_share_names(user_id)
-                .map_err(|e| {
-                    error!("{}", e);
-                    response::internal_server_error()
-                })?
-                .into_iter()
-                .map(Share::new)
-                .collect::<Vec<_>>();
-            Ok(shares)
+            let fut = BlockingFutureTry::new(move || {
+                let shares = store
+                    .get_share_names(user_id)
+                    .map_err(|e| {
+                        error!("{}", e);
+                        response::internal_server_error()
+                    })?
+                    .into_iter()
+                    .map(Share::new)
+                    .collect::<Vec<_>>();
+                Ok(shares)
+            });
+            Box::new(fut)
         } else {
-            Ok(vec![Share::new(String::from("public"))])
+            let fut = future::ok(vec![Share::new(String::from("public"))]);
+            Box::new(fut)
         }
     }
 
@@ -350,26 +355,28 @@ impl RustyShare {
 
     fn browse_shares(&self, parts: Parts) -> BoxedFuture<Response, Error> {
         let store = self.store.clone();
-        let fut = BlockingFuture::new(move || {
-            let authentication = Self::get_authentication(&store, &parts);
-            match authentication {
+        let store_ = self.store.clone();
+        let fut = BlockingFuture::new(move || Self::get_authentication(&store, &parts))
+            // FIXME: !
+            .map_err(|_| Error::StreamCancelled)
+            .and_then(move |authentication| match authentication {
                 Authentication::User(user_id, name) => {
                     info!("{} GET /browse/", name);
-                    match Self::get_shares(&store, Some(user_id)) {
-                        Ok(shares) => page::shares(&shares, Some(name)),
-                        Err(response) => response,
-                    }
+                    let fut = Self::get_shares(&store_, Some(user_id)).then(|r| match r {
+                        Ok(shares) => future::ok(page::shares(&shares, Some(name))),
+                        Err(response) => future::ok(response),
+                    });
+                    Box::new(fut) as BoxedFuture<Response, Error>
                 }
                 Authentication::Error(_) => {
                     info!("anonymous GET /browse/");
-                    match Self::get_shares(&store, None) {
-                        Ok(shares) => page::shares(&shares, None),
-                        Err(response) => response,
-                    }
+                    let fut = Self::get_shares(&store_, None).then(|r| match r {
+                        Ok(shares) => future::ok(page::shares(&shares, None)),
+                        Err(response) => future::ok(response),
+                    });
+                    Box::new(fut)
                 }
-            }
-        })
-        .map_err(|_| Error::StreamCancelled); // FIXME: !
+            });
         Box::new(fut)
     }
 
