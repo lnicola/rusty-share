@@ -154,21 +154,25 @@ impl RustyShare {
         store: &Option<SqliteStore>,
         name: &str,
         user_id: Option<i32>,
-    ) -> Result<PathBuf, Response> {
-        if let Some(store) = store {
-            let path = store
-                .lookup_share(name, user_id)
-                .map_err(|e| {
-                    error!("{}", e);
-                    response::internal_server_error()
-                })?
-                .ok_or_else(response::not_found)?;
-            Ok(path)
-        } else if name == "public" {
-            Ok(root)
-        } else {
-            Err(response::not_found())
-        }
+    ) -> impl Future<Item = PathBuf, Error = Response> {
+        let store = store.clone();
+        let name = name.to_string();
+        BlockingFutureTry::new(move || {
+            if let Some(store) = store {
+                let path = store
+                    .lookup_share(&name, user_id)
+                    .map_err(|e| {
+                        error!("{}", e);
+                        response::internal_server_error()
+                    })?
+                    .ok_or_else(response::not_found)?;
+                Ok(path)
+            } else if name == "public" {
+                Ok(root)
+            } else {
+                Err(response::not_found())
+            }
+        })
     }
 
     fn get_shares(
@@ -279,20 +283,25 @@ impl RustyShare {
                         }
                     };
 
-                    match Self::lookup_share(root, &store, &share_name, user_id) {
-                        Ok(share_path) => {
-                            if parts.method == Method::GET {
-                                let request = request_from_parts(&parts);
-                                RustyShare::browse(share_name, share_path, path, request, user_name)
-                            } else {
-                                let fut = files_from_body(body).and_then(move |files| {
-                                    RustyShare::archive(share_path, path, files)
-                                });
-                                Box::new(fut)
+                    let fut = Self::lookup_share(root, &store, &share_name, user_id).then(
+                        move |r| match r {
+                            Ok(share_path) => {
+                                if parts.method == Method::GET {
+                                    let request = request_from_parts(&parts);
+                                    RustyShare::browse(
+                                        share_name, share_path, path, request, user_name,
+                                    )
+                                } else {
+                                    let fut = files_from_body(body).and_then(move |files| {
+                                        RustyShare::archive(share_path, path, files)
+                                    });
+                                    Box::new(fut)
+                                }
                             }
-                        }
-                        Err(res) => Box::new(future::ok(res)),
-                    }
+                            Err(res) => Box::new(future::ok(res)),
+                        },
+                    );
+                    Box::new(fut) as BoxedFuture<Response, Error>
                 }
                 Err(e) => {
                     error!("{}", e);
