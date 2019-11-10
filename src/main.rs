@@ -5,9 +5,6 @@ use archive::Archive;
 use authentication::Authentication;
 use blocking_future::{BlockingFuture, BlockingFutureTry};
 use db::SqliteStore;
-use diesel::r2d2::{self, ConnectionManager};
-use diesel::sqlite::SqliteConnection;
-use diesel::QueryResult;
 use error::Error;
 use futures::{future, Future, Stream};
 use headers::{Cookie, HeaderMapExt};
@@ -56,13 +53,12 @@ mod scrypt_simple;
 mod share;
 mod share_entry;
 
-type Pool = r2d2::Pool<ConnectionManager<SqliteConnection>>;
 type Response = http::Response<Body>;
 type BoxedFuture<T, E> = Box<dyn Future<Item = T, Error = E> + Send>;
 
 struct RustyShare {
     root: PathBuf,
-    pool: Option<Pool>,
+    store: Option<SqliteStore>,
 }
 
 fn get_archive(archive: Archive) -> Body {
@@ -207,7 +203,8 @@ impl RustyShare {
         if parts.method == Method::GET {
             self.login_page()
         } else {
-            let fut = self.get_db().and_then(move |store| {
+            let store = self.store.clone();
+            let fut = {
                 let redirect = form_urlencoded::parse(parts.uri.query().unwrap_or("").as_bytes())
                     .filter_map(|p| {
                         if p.0 == "redirect" {
@@ -219,14 +216,15 @@ impl RustyShare {
                     .next();
                 LoginForm::from_body(body)
                     .map(|form| Self::login_action(store, redirect, &form.user, &form.pass))
-            });
+            };
             Box::new(fut)
         }
     }
 
     fn browse_or_archive(&self, parts: Parts, body: Body) -> BoxedFuture<Response, Error> {
         let root = self.root.clone();
-        let fut = self.get_db().and_then(move |store| {
+        let store = self.store.clone();
+        let fut = {
             let authentication = Self::get_authentication(&store, &parts);
             let pb = decode(parts.uri.path())
                 .map(|s| {
@@ -301,12 +299,12 @@ impl RustyShare {
                     Box::new(future::ok(response::bad_request()))
                 }
             }
-        });
+        };
         Box::new(fut)
     }
 
     fn login_page(&self) -> BoxedFuture<Response, Error> {
-        Box::new(if self.pool.is_some() {
+        Box::new(if self.store.is_some() {
             future::ok(page::login(None))
         } else {
             future::ok(response::not_found())
@@ -338,7 +336,8 @@ impl RustyShare {
     }
 
     fn browse_shares(&self, parts: Parts) -> BoxedFuture<Response, Error> {
-        let fut = self.get_db().map(move |store| {
+        let store = self.store.clone();
+        let fut = BlockingFuture::new(move || {
             let authentication = Self::get_authentication(&store, &parts);
             match authentication {
                 Authentication::User(user_id, name) => {
@@ -356,24 +355,9 @@ impl RustyShare {
                     }
                 }
             }
-        });
+        })
+        .map_err(|_| Error::StreamCancelled); // FIXME: !
         Box::new(fut)
-    }
-
-    fn get_db(&self) -> impl Future<Item = Option<SqliteStore>, Error = Error> {
-        let pool = self.pool.clone();
-        BlockingFutureTry::new(move || {
-            let store = pool
-                .as_ref()
-                .map(|pool| pool.get())
-                .transpose()?
-                .map(SqliteStore::new);
-            Ok(store)
-        })
-        .map_err(|e| {
-            error!("{}", e);
-            e
-        })
     }
 
     fn get_authentication(store: &Option<SqliteStore>, parts: &Parts) -> Authentication {
@@ -483,15 +467,9 @@ impl RustyShare {
 fn run() -> Result<(), Error> {
     let options = Options::from_args();
 
-    let mut pool = None;
-    if let Some(ref db) = options.db {
+    let store: Option<SqliteStore> = options.db.as_ref().map(|db| {
         let should_initialize = !Path::new(&db).exists();
-
-        let manager = ConnectionManager::<SqliteConnection>::new(db.clone());
-        let pool_ = Pool::builder().build(manager).expect("db pool");
-
-        let store = SqliteStore::new(pool_.get().unwrap());
-        pool = Some(pool_);
+        let store = SqliteStore::new(db);
 
         if should_initialize {
             info!("Initializing database");
@@ -500,22 +478,26 @@ fn run() -> Result<(), Error> {
                 .expect("unable to create database");
         }
 
+        store
+    });
+
+    if let Some(store) = &store {
         match options.command {
             Some(Command::Register { ref user, ref pass }) => {
-                register_user(&store, &user, &pass)?;
+                register_user(store, &user, &pass)?;
                 return Ok(());
             }
             Some(Command::ResetPassword { ref user, ref pass }) => {
-                reset_password(&store, &user, &pass)?;
+                reset_password(store, &user, &pass)?;
                 return Ok(());
             }
             Some(Command::CreateShare { ref name, ref path }) => {
-                create_share(&store, &name, &path)?;
+                create_share(store, &name, &path)?;
                 return Ok(());
             }
             None => {}
         }
-    }
+    };
 
     let addr = SocketAddr::new(
         options
@@ -528,7 +510,7 @@ fn run() -> Result<(), Error> {
 
     let rusty_share = RustyShare {
         root: options.root,
-        pool,
+        store,
     };
 
     let rusty_share = Arc::new(rusty_share);
@@ -690,7 +672,7 @@ pub fn authenticate(
     store: &SqliteStore,
     name: &str,
     password: &str,
-) -> QueryResult<Option<[u8; 16]>> {
+) -> Result<Option<[u8; 16]>, Error> {
     let user = store
         .find_user(name)?
         .and_then(|user| {
