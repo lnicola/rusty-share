@@ -215,7 +215,7 @@ impl RustyShare {
                     })
                     .next();
                 LoginForm::from_body(body)
-                    .map(|form| Self::login_action(store, redirect, &form.user, &form.pass))
+                    .and_then(|form| Self::login_action(store, redirect, &form.user, &form.pass))
             };
             Box::new(fut)
         }
@@ -316,22 +316,26 @@ impl RustyShare {
         redirect: Option<String>,
         user: &str,
         pass: &str,
-    ) -> Response {
+    ) -> BoxedFuture<Response, Error> {
         if let Some(store) = store {
+            let user = user.to_string();
+            let pass = pass.to_string();
             let redirect = redirect.unwrap_or_else(|| String::from("/browse/"));
-
-            let session = authenticate(&store, user, pass).unwrap();
-            if let Some(session_id) = session {
-                info!("Authenticating {}: success", user);
-                response::login_ok(hex::encode(&session_id), &redirect)
-            } else {
-                info!("Authenticating {}: failed", user);
-                page::login(Some(
-                    "Login failed. Please contact the site owner to reset your password.",
-                ))
-            }
+            let user_ = user.clone();
+            let fut = authenticate(store, user, pass).map(move |session| {
+                if let Some(session_id) = session {
+                    info!("Authenticating {}: success", user_);
+                    response::login_ok(hex::encode(&session_id), &redirect)
+                } else {
+                    info!("Authenticating {}: failed", user_);
+                    page::login(Some(
+                        "Login failed. Please contact the site owner to reset your password.",
+                    ))
+                }
+            });
+            Box::new(fut)
         } else {
-            response::not_found()
+            Box::new(future::ok(response::not_found()))
         }
     }
 
@@ -669,26 +673,28 @@ pub fn create_share(store: &SqliteStore, name: &str, path: &str) -> Result<(), E
 }
 
 pub fn authenticate(
-    store: &SqliteStore,
-    name: &str,
-    password: &str,
-) -> Result<Option<[u8; 16]>, Error> {
-    let user = store
-        .find_user(name)?
-        .and_then(|user| {
-            scrypt_simple::scrypt_check(password, &user.password)
-                .map(|_| user)
-                .map_err(|e| error!("Password verification failed for user {}: {}", name, e))
-                .ok()
-        })
-        .map(|user| {
-            let session_id = rand::thread_rng().gen::<[u8; 16]>();
-            if let Err(e) = store.create_session(&session_id, user.id) {
-                error!("Error saving session for user id {}: {}", user.id, e);
-            }
+    store: SqliteStore,
+    name: String,
+    password: String,
+) -> impl Future<Item = Option<[u8; 16]>, Error = Error> {
+    BlockingFutureTry::new(move || {
+        let user = store
+            .find_user(&name)?
+            .and_then(|user| {
+                scrypt_simple::scrypt_check(&password, &user.password)
+                    .map(|_| user)
+                    .map_err(|e| error!("Password verification failed for user {}: {}", name, e))
+                    .ok()
+            })
+            .map(|user| {
+                let session_id = rand::thread_rng().gen::<[u8; 16]>();
+                if let Err(e) = store.create_session(&session_id, user.id) {
+                    error!("Error saving session for user id {}: {}", user.id, e);
+                }
 
-            session_id
-        });
+                session_id
+            });
 
-    Ok(user)
+        Ok(user)
+    })
 }
