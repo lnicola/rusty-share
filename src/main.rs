@@ -113,10 +113,10 @@ impl LoginForm {
         let mut pass = String::new();
 
         for p in form_urlencoded::parse(input.as_ref()) {
-            if p.0 == "user" {
-                user = p.1.into_owned();
-            } else if p.0 == "pass" {
-                pass = p.1.into_owned();
+            match p.0.as_ref() {
+                "user" => user = p.1.into_owned(),
+                "pass" => pass = p.1.into_owned(),
+                _ => {}
             }
         }
         Self { user, pass }
@@ -140,12 +140,11 @@ impl RegisterForm {
         let mut confirm_pass = String::new();
 
         for p in form_urlencoded::parse(input.as_ref()) {
-            if p.0 == "user" {
-                user = p.1.into_owned();
-            } else if p.0 == "pass" {
-                pass = p.1.into_owned();
-            } else if p.0 == "confirm_pass" {
-                confirm_pass = p.1.into_owned();
+            match p.0.as_ref() {
+                "user" => user = p.1.into_owned(),
+                "pass" => pass = p.1.into_owned(),
+                "confirm_pass" => confirm_pass = p.1.into_owned(),
+                _ => {}
             }
         }
         Self {
@@ -271,8 +270,7 @@ impl RustyShare {
                 if &form.pass != &form.confirm_pass {
                     page::register(Some("Registration failed. Passwords doesn't match."))
                 } else {
-                    let exists = store.users_exist();
-                    match exists {
+                    match store.users_exist() {
                         Ok(exists) => {
                             if exists {
                                 response::not_found()
