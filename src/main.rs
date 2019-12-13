@@ -271,16 +271,13 @@ impl RustyShare {
                     page::register(Some("Registration failed. Passwords doesn't match."))
                 } else {
                     match store.users_exist() {
-                        Ok(exists) => {
-                            if exists {
-                                response::not_found()
-                            } else if parts.method == Method::GET {
-                                page::register(None)
-                            } else {
-                                Self::register_action(store, &form.user, &form.pass)
-                            }
+                        Ok(true) => response::not_found(),
+                        Ok(false) if parts.method == Method::GET => page::register(None),
+                        Ok(false) => Self::register_action(store, &form.user, &form.pass),
+                        Err(e) => {
+                            error!("{}", e);
+                            response::internal_server_error()
                         }
-                        Err(_) => response::internal_server_error(),
                     }
                 }
             });
