@@ -105,7 +105,6 @@ fn get_archive_name(path_: &Path, files: &[PathBuf], single_dir: bool) -> String
 struct LoginForm {
     user: String,
     pass: String,
-    confirm_pass: String
 }
 
 impl LoginForm {
@@ -149,7 +148,11 @@ impl RegisterForm {
                 confirm_pass = p.1.into_owned();
             }
         }
-        Self { user, pass, confirm_pass }
+        Self {
+            user,
+            pass,
+            confirm_pass,
+        }
     }
 
     fn from_body(body: Body) -> impl Future<Item = Self, Error = Error> {
@@ -284,14 +287,6 @@ impl RustyShare {
                 }
             });
             Box::new(fut)
-        } else {
-            Box::new(future::ok(response::not_found()))
-        }
-    }
-       
-    fn register_user(&self, parts: Parts, user: &str, pass: &str) -> Response {
-        if parts.method == Method::GET {
-            self.register_page()
         } else {
             Box::new(future::ok(response::not_found()))
         }
