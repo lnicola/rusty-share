@@ -1,6 +1,7 @@
 use super::models::{AccessLevel, User};
 use super::schema::{sessions, shares, user_shares, users};
 use crate::Error;
+use diesel::query_builder::AsQuery;
 use diesel::r2d2::{self, ConnectionManager};
 use diesel::sql_types::{Integer, Nullable};
 use diesel::{
@@ -46,8 +47,7 @@ impl SqliteStore {
 
     pub fn users_exist(&self) -> DbResult<bool> {
         let conn = self.0.get()?;
-        let r = diesel::select(diesel::dsl::exists(users::table.select(users::all_columns)))
-            .get_result(&conn)?;
+        let r = diesel::select(diesel::dsl::exists(users::table.as_query())).get_result(&conn)?;
         Ok(r)
     }
 
