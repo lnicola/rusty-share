@@ -429,10 +429,16 @@ impl RustyShare {
                         headers.insert(CONTENT_TYPE, HeaderValue::from_static(mime));
                     }
                     let file = tokio::fs::File::open(&disk_path).await?;
-                    FileResponseBuilder::new()
+                    match FileResponseBuilder::new()
                         .request(&request)
                         .build(file, metadata)
-                        .unwrap()
+                    {
+                        Ok(response) => response,
+                        Err(e) => {
+                            error!("{}", e);
+                            response::internal_server_error()
+                        }
+                    }
                 }
             }
             Err(e) => {
