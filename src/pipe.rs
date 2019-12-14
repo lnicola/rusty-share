@@ -1,40 +1,32 @@
 use bytes::{Bytes, BytesMut};
-use futures::sink::{Sink, Wait};
+use futures::executor;
 use std::io::{Error, ErrorKind, Result, Write};
-use tokio_sync::mpsc::Sender;
+use tokio::sync::mpsc::Sender;
 
 pub struct Pipe {
-    dest: Wait<Sender<Bytes>>,
+    dest: Sender<Bytes>,
     bytes: BytesMut,
 }
 
 impl Pipe {
     pub fn new(destination: Sender<Bytes>) -> Self {
         Pipe {
-            dest: destination.wait(),
+            dest: destination,
             bytes: BytesMut::new(),
         }
-    }
-}
-
-impl Drop for Pipe {
-    fn drop(&mut self) {
-        let _ = self.dest.close();
     }
 }
 
 impl Write for Pipe {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
         self.bytes.extend_from_slice(buf);
-        match self.dest.send(self.bytes.take().into()) {
+        match executor::block_on(self.dest.send(self.bytes.split().freeze())) {
             Ok(_) => Ok(buf.len()),
             Err(e) => Err(Error::new(ErrorKind::UnexpectedEof, e)),
         }
     }
 
     fn flush(&mut self) -> Result<()> {
-        self.dest
-            .flush()
-            .map_err(|e| Error::new(ErrorKind::UnexpectedEof, e))
+        Ok(())
     }
 }

@@ -3,18 +3,17 @@ extern crate diesel;
 
 use archive::Archive;
 use authentication::Authentication;
-use blocking_future::{BlockingFuture, BlockingFutureTry};
 use db::SqliteStore;
 use error::Error;
-use futures::{future, Future, Stream};
+use futures::stream::StreamExt;
 use headers::{Cookie, HeaderMapExt};
 use hex;
 use http::header::CONTENT_TYPE;
 use http::request::Parts;
 use http::{HeaderMap, HeaderValue, Method, Request};
-use http_serve::{self, ChunkedReadFile};
-use hyper::service::service_fn;
+use hyper::{body, service};
 use hyper::{Body, Server};
+use hyper_staticfile::FileResponseBuilder;
 use log::{error, info};
 use mime_guess;
 use options::{Command, Options};
@@ -27,7 +26,7 @@ use share::Share;
 use share_entry::ShareEntry;
 use std::borrow::Cow;
 use std::ffi::{OsStr, OsString};
-use std::fs::{self, DirEntry, File};
+use std::fs::{self, DirEntry};
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Component, Path, PathBuf};
 use std::str;
@@ -35,14 +34,13 @@ use std::sync::Arc;
 use std::time::Instant;
 use structopt::StructOpt;
 use tar::Builder;
-use tokio;
-use tokio_sync::mpsc;
+use tokio::sync::mpsc;
+use tokio::task;
 use url::form_urlencoded;
 use walkdir::WalkDir;
 
 mod archive;
 mod authentication;
-mod blocking_future;
 mod db;
 mod error;
 mod options;
@@ -54,7 +52,6 @@ mod share;
 mod share_entry;
 
 type Response = http::Response<Body>;
-type BoxedFuture<T, E> = Box<dyn Future<Item = T, Error = E> + Send>;
 
 struct RustyShare {
     root: PathBuf,
@@ -65,18 +62,17 @@ fn get_archive(archive: Archive) -> Body {
     let (tx, rx) = mpsc::channel(1);
     let pipe = Pipe::new(tx);
     let mut builder = Builder::new(pipe);
-    let f = BlockingFutureTry::new(move || {
+    let f = task::spawn_blocking(move || {
         for entry in archive.entries() {
             if let Err(e) = entry.write_to(&mut builder) {
                 error!("{}", e);
             }
         }
         builder.finish()
-    })
-    .map_err(|e| error!("{}", e));
+    });
     tokio::spawn(f);
 
-    let rx = rx.map_err(|_| Error::StreamCancelled);
+    let rx = rx.map(|chunk| Ok::<_, Error>(chunk));
     Body::wrap_stream(rx)
 }
 
@@ -108,22 +104,19 @@ struct LoginForm {
 }
 
 impl LoginForm {
-    pub fn from_bytes<T: AsRef<[u8]>>(input: T) -> Self {
+    pub async fn from_body(body: Body) -> Result<Self, Error> {
+        let bytes = body::to_bytes(body).await?;
+
         let mut user = String::new();
         let mut pass = String::new();
-
-        for p in form_urlencoded::parse(input.as_ref()) {
+        for p in form_urlencoded::parse(bytes.as_ref()) {
             match p.0.as_ref() {
                 "user" => user = p.1.into_owned(),
                 "pass" => pass = p.1.into_owned(),
                 _ => {}
             }
         }
-        Self { user, pass }
-    }
-
-    fn from_body(body: Body) -> impl Future<Item = Self, Error = Error> {
-        vec_from_body(body).map(Self::from_bytes)
+        Ok(Self { user, pass })
     }
 }
 
@@ -134,12 +127,14 @@ struct RegisterForm {
 }
 
 impl RegisterForm {
-    pub fn from_bytes<T: AsRef<[u8]>>(input: T) -> Self {
+    pub async fn from_body(body: Body) -> Result<Self, Error> {
+        let bytes = body::to_bytes(body).await?;
+
         let mut user = String::new();
         let mut pass = String::new();
         let mut confirm_pass = String::new();
 
-        for p in form_urlencoded::parse(input.as_ref()) {
+        for p in form_urlencoded::parse(bytes.as_ref()) {
             match p.0.as_ref() {
                 "user" => user = p.1.into_owned(),
                 "pass" => pass = p.1.into_owned(),
@@ -147,50 +142,37 @@ impl RegisterForm {
                 _ => {}
             }
         }
-        Self {
+        Ok(Self {
             user,
             pass,
             confirm_pass,
-        }
-    }
-
-    fn from_body(body: Body) -> impl Future<Item = Self, Error = Error> {
-        vec_from_body(body).map(Self::from_bytes)
+        })
     }
 }
 
-fn files_from_body(body: Body) -> impl Future<Item = Vec<String>, Error = Error> {
-    vec_from_body(body).map(|buf| {
-        form_urlencoded::parse(buf.as_ref())
-            .filter_map(|p| {
-                if p.0 == "s" {
-                    let percent_decoded =
-                        Cow::from(percent_encoding::percent_decode_str(p.1.as_ref()));
-                    String::from_utf8(percent_decoded.into_owned()).ok()
-                } else {
-                    None
-                }
-            })
-            .collect()
-    })
-}
-
-fn vec_from_body(body: Body) -> impl Future<Item = Vec<u8>, Error = Error> {
-    body.concat2()
-        .map_err(|_e| Error::StreamCancelled)
-        .map(|body| body.to_vec())
+async fn files_from_body(body: Body) -> Result<Vec<String>, Error> {
+    let bytes = body::to_bytes(body).await?;
+    let files = form_urlencoded::parse(bytes.as_ref())
+        .filter_map(|p| {
+            if p.0 == "s" {
+                let percent_decoded = Cow::from(percent_encoding::percent_decode_str(p.1.as_ref()));
+                String::from_utf8(percent_decoded.into_owned()).ok()
+            } else {
+                None
+            }
+        })
+        .collect();
+    Ok(files)
 }
 
 impl RustyShare {
-    fn lookup_share(
-        root: PathBuf,
+    async fn lookup_share(
+        root: &Path,
         store: &Option<SqliteStore>,
         name: &str,
         user_id: Option<i32>,
-    ) -> impl Future<Item = PathBuf, Error = Response> {
-        let store = store.clone();
-        let name = name.to_string();
-        BlockingFutureTry::new(move || {
+    ) -> Result<PathBuf, Response> {
+        task::block_in_place(move || {
             if let Some(store) = store {
                 let path = store
                     .lookup_share(&name, user_id)
@@ -201,20 +183,19 @@ impl RustyShare {
                     .ok_or_else(response::not_found)?;
                 Ok(path)
             } else if name == "public" {
-                Ok(root)
+                Ok(root.to_path_buf())
             } else {
                 Err(response::not_found())
             }
         })
     }
 
-    fn get_shares(
+    async fn get_shares(
         store: &Option<SqliteStore>,
         user_id: Option<i32>,
-    ) -> BoxedFuture<Vec<Share>, Response> {
-        let store = store.clone();
+    ) -> Result<Vec<Share>, Response> {
         if let Some(store) = store {
-            let fut = BlockingFutureTry::new(move || {
+            task::block_in_place(move || {
                 let shares = store
                     .get_share_names(user_id)
                     .map_err(|e| {
@@ -225,278 +206,246 @@ impl RustyShare {
                     .map(Share::new)
                     .collect::<Vec<_>>();
                 Ok(shares)
-            });
-            Box::new(fut)
+            })
         } else {
-            let fut = future::ok(vec![Share::new(String::from("public"))]);
-            Box::new(fut)
+            Ok(vec![Share::new(String::from("public"))])
         }
     }
 
-    fn index(&self) -> BoxedFuture<Response, Error> {
-        Box::new(future::ok(response::found("/browse/")))
+    async fn index(&self) -> Result<Response, Error> {
+        Ok(response::found("/browse/"))
     }
 
-    fn favicon(&self) -> BoxedFuture<Response, Error> {
-        Box::new(future::ok(response::not_found()))
+    async fn favicon(&self) -> Result<Response, Error> {
+        Ok(response::not_found())
     }
 
-    fn login(&self, parts: Parts, body: Body) -> BoxedFuture<Response, Error> {
-        if parts.method == Method::GET {
-            self.login_page()
-        } else {
-            let store = self.store.clone();
-            let fut = {
-                let redirect = form_urlencoded::parse(parts.uri.query().unwrap_or("").as_bytes())
-                    .filter_map(|p| {
-                        if p.0 == "redirect" {
-                            Some(p.1.into_owned())
-                        } else {
-                            None
-                        }
-                    })
-                    .next();
-                LoginForm::from_body(body)
-                    .and_then(|form| Self::login_action(store, redirect, &form.user, &form.pass))
-            };
-            Box::new(fut)
-        }
-    }
-
-    fn register(&self, parts: Parts, body: Body) -> BoxedFuture<Response, Error> {
-        let store = self.store.clone();
-        if let Some(store) = store {
-            let fut = RegisterForm::from_body(body).map(move |form| {
-                if &form.pass != &form.confirm_pass {
-                    page::register(Some("Registration failed: passwords don't match."))
+    async fn login(&self, parts: Parts, body: Body) -> Result<Response, Error> {
+        let redirect = form_urlencoded::parse(parts.uri.query().unwrap_or("").as_bytes())
+            .filter_map(|p| {
+                if p.0 == "redirect" {
+                    Some(p.1.into_owned())
                 } else {
-                    match store.users_exist() {
-                        Ok(true) => response::not_found(),
-                        Ok(false) if parts.method == Method::GET => page::register(None),
-                        Ok(false) => Self::register_action(store, &form.user, &form.pass),
-                        Err(e) => {
-                            error!("{}", e);
-                            response::internal_server_error()
-                        }
-                    }
+                    None
                 }
-            });
-            Box::new(fut)
-        } else {
-            Box::new(future::ok(response::not_found()))
-        }
+            })
+            .next();
+        let form = LoginForm::from_body(body).await?;
+        Self::login_action(self.store.as_ref(), redirect, &form.user, &form.pass).await
     }
 
-    fn browse_or_archive(&self, parts: Parts, body: Body) -> BoxedFuture<Response, Error> {
-        let root = self.root.clone();
-        let store = self.store.clone();
-        let fut = {
-            let authentication = Self::get_authentication(&store, &parts);
-            let pb = decode(parts.uri.path())
-                .map(|s| {
-                    PathBuf::from(s)
-                        .components()
-                        .skip(2)
-                        .map(|c| Path::new(c.as_os_str()))
-                        .collect::<PathBuf>()
-                })
-                .and_then(|pb| {
-                    if check_for_path_traversal(&pb) {
-                        Ok(pb)
-                    } else {
-                        Err(Error::InvalidArgument)
+    async fn register(&self, parts: Parts, body: Body) -> Result<Response, Error> {
+        let response = if let Some(store) = self.store.as_ref() {
+            let form = RegisterForm::from_body(body).await?;
+            if &form.pass != &form.confirm_pass {
+                page::register(Some("Registration failed: passwords don't match."))
+            } else {
+                let response = match store.users_exist() {
+                    Ok(true) => response::not_found(),
+                    Ok(false) if parts.method == Method::GET => page::register(None),
+                    Ok(false) => Self::register_action(store, &form.user, &form.pass),
+                    Err(e) => {
+                        error!("{}", e);
+                        response::internal_server_error()
                     }
-                });
-            match pb {
-                Ok(pb) => {
-                    let share_name = pb
-                        .components()
-                        .next()
-                        .unwrap()
-                        .as_os_str()
-                        .to_str()
-                        .unwrap()
-                        .to_string();
+                };
+                response
+            }
+        } else {
+            response::not_found()
+        };
+        Ok(response)
+    }
 
-                    let path = pb
-                        .components()
-                        .skip(1)
-                        .map(|c| Path::new(c.as_os_str()))
-                        .collect::<PathBuf>();
-                    let (user_id, user_name) = match authentication {
-                        Authentication::User(user_id, name) => {
-                            info!(
-                                "{} {} /browse/{}/{}",
-                                name,
-                                parts.method,
-                                share_name,
-                                path.display()
-                            );
-                            (Some(user_id), Some(name))
-                        }
-                        Authentication::Error(_) => {
-                            info!(
-                                "anonymous {} /browse/{}/{}",
-                                parts.method,
-                                share_name,
-                                path.display()
-                            );
-                            (None, None)
-                        }
-                    };
-
-                    let fut = Self::lookup_share(root, &store, &share_name, user_id).then(
-                        move |r| match r {
-                            Ok(share_path) => {
-                                if parts.method == Method::GET {
-                                    let request = request_from_parts(&parts);
-                                    RustyShare::browse(
-                                        share_name, share_path, path, request, user_name,
-                                    )
-                                } else {
-                                    let fut = files_from_body(body).and_then(move |files| {
-                                        RustyShare::archive(share_path, path, files)
-                                    });
-                                    Box::new(fut)
-                                }
-                            }
-                            Err(res) => Box::new(future::ok(res)),
-                        },
-                    );
-                    Box::new(fut) as BoxedFuture<Response, Error>
+    async fn browse_or_archive(&self, parts: Parts, body: Body) -> Result<Response, Error> {
+        let authentication = Self::get_authentication(&self.store, &parts);
+        let pb = decode(parts.uri.path())
+            .map(|s| {
+                PathBuf::from(s)
+                    .components()
+                    .skip(2)
+                    .map(|c| Path::new(c.as_os_str()))
+                    .collect::<PathBuf>()
+            })
+            .and_then(|pb| {
+                if check_for_path_traversal(&pb) {
+                    Ok(pb)
+                } else {
+                    Err(Error::InvalidArgument)
                 }
-                Err(e) => {
-                    error!("{}", e);
-                    Box::new(future::ok(response::bad_request()))
+            });
+        match pb {
+            Ok(pb) => {
+                let share_name = pb
+                    .components()
+                    .next()
+                    .unwrap()
+                    .as_os_str()
+                    .to_str()
+                    .unwrap()
+                    .to_string();
+
+                let path = pb
+                    .components()
+                    .skip(1)
+                    .map(|c| Path::new(c.as_os_str()))
+                    .collect::<PathBuf>();
+                let (user_id, user_name) = match authentication {
+                    Authentication::User(user_id, name) => {
+                        info!(
+                            "{} {} /browse/{}/{}",
+                            name,
+                            parts.method,
+                            share_name,
+                            path.display()
+                        );
+                        (Some(user_id), Some(name))
+                    }
+                    Authentication::Error(_) => {
+                        info!(
+                            "anonymous {} /browse/{}/{}",
+                            parts.method,
+                            share_name,
+                            path.display()
+                        );
+                        (None, None)
+                    }
+                };
+
+                let r = Self::lookup_share(&self.root, &self.store, &share_name, user_id).await;
+                match r {
+                    Ok(share_path) => {
+                        if parts.method == Method::GET {
+                            let request = request_from_parts(&parts);
+                            RustyShare::browse(share_name, share_path, path, request, user_name)
+                                .await
+                        } else {
+                            let files = files_from_body(body).await?;
+                            RustyShare::archive(share_path, path, files).await
+                        }
+                    }
+                    Err(res) => Ok(res),
                 }
             }
-        };
-        Box::new(fut)
+            Err(e) => {
+                error!("{}", e);
+                Ok(response::bad_request())
+            }
+        }
     }
 
-    fn login_page(&self) -> BoxedFuture<Response, Error> {
-        Box::new(if self.store.is_some() {
-            future::ok(page::login(None))
+    async fn login_page(&self) -> Result<Response, Error> {
+        if self.store.is_some() {
+            Ok(page::login(None))
         } else {
-            future::ok(response::not_found())
-        })
+            Ok(response::not_found())
+        }
     }
 
-    fn login_action(
-        store: Option<SqliteStore>,
+    async fn login_action(
+        store: Option<&SqliteStore>,
         redirect: Option<String>,
         user: &str,
         pass: &str,
-    ) -> BoxedFuture<Response, Error> {
-        if let Some(store) = store {
-            let user = user.to_string();
-            let pass = pass.to_string();
+    ) -> Result<Response, Error> {
+        let response = if let Some(store) = store {
             let redirect = redirect.unwrap_or_else(|| String::from("/browse/"));
-            let user_ = user.clone();
-            let fut = authenticate(store, user, pass).map(move |session| {
-                if let Some(session_id) = session {
-                    info!("Authenticating {}: success", user_);
-                    response::login_ok(hex::encode(&session_id), &redirect)
-                } else {
-                    info!("Authenticating {}: failed", user_);
-                    page::login(Some(
-                        "Login failed. Please contact the site owner to reset your password.",
-                    ))
-                }
-            });
-            Box::new(fut)
+            let session = authenticate(store, user, pass).await?;
+            if let Some(session_id) = session {
+                info!("Authenticating {}: success", user);
+                response::login_ok(hex::encode(&session_id), &redirect)
+            } else {
+                info!("Authenticating {}: failed", user);
+                page::login(Some(
+                    "Login failed. Please contact the site owner to reset your password.",
+                ))
+            }
         } else {
-            Box::new(future::ok(response::not_found()))
-        }
+            response::not_found()
+        };
+        Ok(response)
     }
 
-    fn register_action(store: SqliteStore, user: &str, pass: &str) -> Response {
-        let user_id = register_user(&store, user, pass);
+    fn register_action(store: &SqliteStore, user: &str, pass: &str) -> Response {
+        let user_id = register_user(store, user, pass);
         match user_id {
             Ok(_) => response::register_ok("/login"),
             Err(_) => page::register(Some("Registration failed.")),
         }
     }
 
-    fn browse_shares(&self, parts: Parts) -> BoxedFuture<Response, Error> {
-        let store = self.store.clone();
-        let store_ = self.store.clone();
-        let fut = BlockingFuture::new(move || Self::get_authentication(&store, &parts))
-            // FIXME: !
-            .map_err(|_| Error::StreamCancelled)
-            .and_then(move |authentication| match authentication {
-                Authentication::User(user_id, name) => {
-                    info!("{} GET /browse/", name);
-                    let fut = Self::get_shares(&store_, Some(user_id)).then(|r| match r {
-                        Ok(shares) => future::ok(page::shares(&shares, Some(name))),
-                        Err(response) => future::ok(response),
-                    });
-                    Box::new(fut) as BoxedFuture<Response, Error>
+    async fn browse_shares(&self, parts: Parts) -> Result<Response, Error> {
+        let authentication =
+            task::block_in_place(move || Self::get_authentication(&self.store, &parts));
+        let response = match authentication {
+            Authentication::User(user_id, name) => {
+                info!("{} GET /browse/", name);
+                let r = Self::get_shares(&self.store, Some(user_id)).await;
+                match r {
+                    Ok(shares) => page::shares(&shares, Some(name)),
+                    Err(response) => response,
                 }
-                Authentication::Error(_) => {
-                    info!("anonymous GET /browse/");
-                    let fut = Self::get_shares(&store_, None).then(|r| match r {
-                        Ok(shares) => future::ok(page::shares(&shares, None)),
-                        Err(response) => future::ok(response),
-                    });
-                    Box::new(fut)
+            }
+            Authentication::Error(_) => {
+                info!("anonymous GET /browse/");
+                let r = Self::get_shares(&self.store, None).await;
+                match r {
+                    Ok(shares) => page::shares(&shares, None),
+                    Err(response) => response,
                 }
-            });
-        Box::new(fut)
+            }
+        };
+        Ok(response)
     }
 
     fn get_authentication(store: &Option<SqliteStore>, parts: &Parts) -> Authentication {
         Authentication::extract(store, &parts.uri, parts.headers.typed_get::<Cookie>())
     }
 
-    fn browse(
+    async fn browse(
         share_name: String,
         share: PathBuf,
         path: PathBuf,
         request: Request<()>,
         user_name: Option<String>,
-    ) -> BoxedFuture<Response, Error> {
+    ) -> Result<Response, Error> {
         let disk_path = share.join(&path);
         let uri_path = request.uri().path().to_string();
 
-        let fut = tokio_fs::metadata(disk_path.clone()).then(|metadata| match metadata {
+        let metadata = tokio::fs::metadata(&disk_path).await;
+        let response = match metadata {
             Ok(metadata) => {
                 if metadata.is_dir() {
                     if !uri_path.ends_with('/') {
-                        Box::new(future::ok(response::found(&(uri_path + "/"))))
+                        response::found(&(uri_path + "/"))
                     } else {
-                        let fut = BlockingFuture::new(move || {
+                        task::block_in_place(move || {
                             render_index(&share_name, &path, &disk_path, user_name)
                         })
-                        .map_err(|_| Error::StreamCancelled); // FIXME: !
-                        Box::new(fut) as BoxedFuture<Response, Error>
                     }
                 } else {
                     let mut headers = HeaderMap::new();
                     if let Some(mime) = mime_guess::from_path(&disk_path).first_raw() {
                         headers.insert(CONTENT_TYPE, HeaderValue::from_static(mime));
                     }
-                    let fut = BlockingFutureTry::new(move || {
-                        File::open(&disk_path)
-                            .and_then(|file| ChunkedReadFile::new(file, None, headers))
-                            .map_err(|e| Error::from_io(e, disk_path))
-                    })
-                    .map(move |crf| http_serve::serve(crf, &request));
-
-                    Box::new(fut)
+                    let file = tokio::fs::File::open(&disk_path).await?;
+                    FileResponseBuilder::new()
+                        .request(&request)
+                        .build(file, metadata)
+                        .unwrap()
                 }
             }
             Err(e) => {
                 error!("{}", Error::from_io(e, disk_path));
-                Box::new(future::ok(response::not_found()))
+                response::not_found()
             }
-        });
-        Box::new(fut)
+        };
+        Ok(response)
     }
 
-    fn archive(share: PathBuf, path: PathBuf, files: Vec<String>) -> BoxedFuture<Response, Error> {
+    async fn archive(share: PathBuf, path: PathBuf, files: Vec<String>) -> Result<Response, Error> {
         let disk_path = share.join(&path);
-        let fut = BlockingFutureTry::new(move || {
+        task::block_in_place(move || {
             let mut files = files.iter().map(PathBuf::from).collect::<Vec<_>>();
             if files.is_empty() {
                 for entry in dir_entries(&disk_path)? {
@@ -530,29 +479,31 @@ impl RustyShare {
                 response::archive(archive_size, body, &archive_name)
             };
             Ok(response)
-        });
-        Box::new(fut)
+        })
     }
 
-    pub fn handle_request(&self, req: Request<Body>) -> BoxedFuture<Response, Error> {
+    pub async fn handle_request(self: Arc<Self>, req: Request<Body>) -> Result<Response, Error> {
         let (parts, body) = req.into_parts();
         match (&parts.method, parts.uri.path()) {
-            (&Method::GET, "/") => self.index(),
+            (&Method::GET, "/") => self.index().await,
             (&Method::GET, "/register") | (&Method::POST, "/register") => {
-                self.register(parts, body)
+                self.register(parts, body).await
             }
-            (&Method::GET, "/login") | (&Method::POST, "/login") => self.login(parts, body),
-            (&Method::GET, "/favicon.ico") => self.favicon(),
-            (&Method::GET, "/browse/") => self.browse_shares(parts),
+            (&Method::GET, "/login") => self.login_page().await,
+            (&Method::POST, "/login") => self.login(parts, body).await,
+            (&Method::GET, "/favicon.ico") => self.favicon().await,
+            (&Method::GET, "/browse/") => self.browse_shares(parts).await,
             (&Method::GET, path) | (&Method::POST, path) if path.starts_with("/browse/") => {
-                self.browse_or_archive(parts, body)
+                self.browse_or_archive(parts, body).await
             }
-            _ => Box::new(future::ok(response::not_found())),
+            _ => Ok(response::not_found()),
         }
     }
 }
 
-fn run() -> Result<(), Error> {
+async fn run() -> Result<(), Error> {
+    pretty_env_logger::init();
+
     let options = Options::from_args();
 
     let store: Option<SqliteStore> = options.db.as_ref().map(|db| {
@@ -600,24 +551,19 @@ fn run() -> Result<(), Error> {
         root: options.root,
         store,
     };
-
     let rusty_share = Arc::new(rusty_share);
 
-    let new_svc = move || {
+    let new_svc = service::make_service_fn(move |_| {
         let rusty_share = Arc::clone(&rusty_share);
-        service_fn(move |req: Request<Body>| rusty_share.handle_request(req))
-    };
+        futures::future::ok::<_, Error>(service::service_fn(move |req| {
+            RustyShare::handle_request(Arc::clone(&rusty_share), req)
+        }))
+    });
 
     let listener = std::net::TcpListener::bind(&addr)?;
 
-    let server = Server::from_tcp(listener)?
-        .tcp_nodelay(true)
-        .serve(new_svc)
-        .map_err(|e| eprintln!("server error: {}", e));
-
-    hyper::rt::run(server);
-
-    Ok(())
+    let server = Server::from_tcp(listener)?.tcp_nodelay(true).serve(new_svc);
+    Ok(server.await?)
 }
 
 fn osstr_from_bytes(bytes: &[u8]) -> Result<&OsStr, Error> {
@@ -670,11 +616,12 @@ fn check_for_path_traversal(path: &Path) -> bool {
 }
 
 fn main() {
-    pretty_env_logger::init();
-
-    if let Err(e) = run() {
-        error!("{}", e);
-    }
+    let mut rt = tokio::runtime::Builder::new()
+        .threaded_scheduler()
+        .enable_all()
+        .build()
+        .unwrap();
+    rt.block_on(async move { run().await }).unwrap();
 }
 
 fn dir_entries(path: &Path) -> Result<impl Iterator<Item = DirEntry>, Error> {
@@ -756,16 +703,16 @@ pub fn create_share(store: &SqliteStore, name: &str, path: &str) -> Result<(), E
     Ok(())
 }
 
-pub fn authenticate(
-    store: SqliteStore,
-    name: String,
-    password: String,
-) -> impl Future<Item = Option<[u8; 16]>, Error = Error> {
-    BlockingFutureTry::new(move || {
+pub async fn authenticate(
+    store: &SqliteStore,
+    name: &str,
+    password: &str,
+) -> Result<Option<[u8; 16]>, Error> {
+    task::block_in_place(move || {
         let user = store
-            .find_user(&name)?
+            .find_user(name)?
             .and_then(|user| {
-                scrypt_simple::scrypt_check(&password, &user.password)
+                scrypt_simple::scrypt_check(password, &user.password)
                     .map(|_| user)
                     .map_err(|e| error!("Password verification failed for user {}: {}", name, e))
                     .ok()

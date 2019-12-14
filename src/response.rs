@@ -46,7 +46,7 @@ pub fn login_redirect(path: &Uri, destroy_session: bool) -> Response<Body> {
 
     if destroy_session {
         let cookie = Cookie::build("sid", "").max_age(Duration::zero()).finish();
-        builder.header(
+        builder = builder.header(
             SET_COOKIE,
             HeaderValue::from_str(&cookie.to_string()).unwrap(),
         );
