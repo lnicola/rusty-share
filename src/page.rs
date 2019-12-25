@@ -1,7 +1,6 @@
 use crate::response;
 use crate::share::Share;
 use crate::share_entry::ShareEntry;
-use cookie::Cookie;
 use horrorshow::helper::doctype;
 use horrorshow::{html, Raw, Template};
 use http::header::SET_COOKIE;
@@ -167,9 +166,11 @@ pub fn login(message: Option<&str>) -> Response<Body> {
         Ok(page) => {
             let mut response = response::page(page);
             if message.is_some() {
+                let cookie = "sid=; HttpOnly; SameSite=Lax; Max-Age=0";
                 response.headers_mut().insert(
                     SET_COOKIE,
-                    HeaderValue::from_str(&Cookie::named("sid").to_string()).unwrap(),
+                    // HeaderValue::from_str(&Cookie::named("sid").to_string()).unwrap(),
+                    HeaderValue::from_static(cookie),
                 );
             }
             response

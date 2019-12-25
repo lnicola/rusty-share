@@ -1,8 +1,6 @@
-use cookie::{Cookie, SameSite};
 use http::header::{CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE, LOCATION, SET_COOKIE};
 use http::{HeaderValue, Response, StatusCode, Uri};
 use hyper::Body;
-use time::Duration;
 
 pub fn page(html: String) -> Response<Body> {
     Response::builder()
@@ -13,18 +11,16 @@ pub fn page(html: String) -> Response<Body> {
 }
 
 pub fn login_ok(session_id: String, redirect: &str) -> Response<Body> {
-    let cookie = Cookie::build("sid", session_id)
-        .max_age(Duration::days(1))
-        .http_only(true)
-        // .secure(true)
-        .same_site(SameSite::Lax)
-        .finish();
+    let cookie = format!("sid={}; HttpOnly; SameSite=Lax; Max-Age=86400", session_id);
+    // let cookie = Cookie::build("sid", session_id)
+    //     .max_age(Duration::days(1))
+    //     .http_only(true)
+    //     // .secure(true)
+    //     .same_site(SameSite::Lax)
+    //     .finish();
     Response::builder()
         .status(StatusCode::FOUND)
-        .header(
-            SET_COOKIE,
-            HeaderValue::from_str(&cookie.to_string()).unwrap(),
-        )
+        .header(SET_COOKIE, HeaderValue::from_str(&cookie).unwrap())
         .header(LOCATION, HeaderValue::from_str(redirect).unwrap())
         .body(Body::empty())
         .unwrap()
@@ -45,11 +41,9 @@ pub fn login_redirect(path: &Uri, destroy_session: bool) -> Response<Body> {
     let mut builder = Response::builder();
 
     if destroy_session {
-        let cookie = Cookie::build("sid", "").max_age(Duration::zero()).finish();
-        builder = builder.header(
-            SET_COOKIE,
-            HeaderValue::from_str(&cookie.to_string()).unwrap(),
-        );
+        let cookie = "sid=; HttpOnly; SameSite=Lax; Max-Age=0";
+        // let cookie = Cookie::build("sid", "").max_age(Duration::zero()).finish();
+        builder = builder.header(SET_COOKIE, HeaderValue::from_static(cookie));
     }
     builder
         .status(StatusCode::FOUND)
