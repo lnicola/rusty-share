@@ -32,7 +32,7 @@ subtle = "2.2"
 tar = { version = "0.4", default-features = false }
 tokio = { version = "0.2", features = ["blocking", "fs", "rt-threaded", "stream", "sync"] }
 url = "2.1"
-walkdir = "2.2"
+walkdir = "2.3"
 
 [features]
 default = ["bundled-windows"]
