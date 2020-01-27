@@ -11,9 +11,9 @@ use hex;
 use http::header::CONTENT_TYPE;
 use http::request::Parts;
 use http::{HeaderMap, HeaderValue, Method, Request};
+use http_serve::{self, ChunkedReadFile};
 use hyper::{body, service};
 use hyper::{Body, Server};
-use hyper_staticfile::FileResponseBuilder;
 use log::{error, info};
 use mime_guess;
 use options::{Command, Options};
@@ -428,17 +428,9 @@ impl RustyShare {
                     if let Some(mime) = mime_guess::from_path(&disk_path).first_raw() {
                         headers.insert(CONTENT_TYPE, HeaderValue::from_static(mime));
                     }
-                    let file = tokio::fs::File::open(&disk_path).await?;
-                    match FileResponseBuilder::new()
-                        .request(&request)
-                        .build(file, metadata)
-                    {
-                        Ok(response) => response,
-                        Err(e) => {
-                            error!("{}", e);
-                            response::internal_server_error()
-                        }
-                    }
+                    let file = tokio::fs::File::open(&disk_path).await?.into_std().await;
+                    let crf = ChunkedReadFile::new(file, headers)?;
+                    http_serve::serve(crf, &request)
                 }
             }
             Err(e) => {
