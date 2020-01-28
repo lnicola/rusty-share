@@ -66,18 +66,6 @@ pub fn index(
                     }
                     input(type="submit", value="Download");
                 }
-                div(id="player-section", class="hidden") {
-                    p(id="song-title") { }
-                    div {
-                        audio(id="player", preload="auto", controls) { }
-                    }
-                    div {
-                        button(id="shuffle", class="media-control", type="button") { : Raw("🔀") }
-                        button(id="prev", class="media-control", type="button") { : Raw("⏮") }
-                        button(id="next", class="media-control", type="button") { : Raw("⏭") }
-                    }
-                }
-                script { : Raw(include_str!("../assets/player.js")) }
             }
         }
     };
