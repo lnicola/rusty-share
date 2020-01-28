@@ -32,16 +32,14 @@ pub fn index(
                 form(method="POST") {
                     div(class="view") {
                         p {
-                            @ if user_name.as_ref().map(|s| !s.is_empty()).unwrap_or_default() {
-                                @ if let Some(user) = user_name {
-                                    : Raw("Logged in as ");
-                                    : user;
-                                    : Raw(" ");
-                                } else {
-                                    : Raw("Browsing anonymously");
-                                }
-                                a(href="/login") { : Raw("login") }
+                            @ if let Some(user) = user_name {
+                                : Raw("Logged in as ");
+                                : user;
+                                : Raw(" ");
+                            } else {
+                                : Raw("Browsing anonymously ");
                             }
+                            a(href="/login") { : Raw("login") }
                         }
                         div(class="entry header") {
                             div { }
@@ -92,16 +90,14 @@ pub fn shares(shares: &[Share], user_name: Option<String>) -> Response<Body> {
             body {
                 div(class="view") {
                     p {
-                        @ if user_name.as_ref().map(|s| !s.is_empty()).unwrap_or_default() {
-                            @ if let Some(user) = user_name {
-                                : Raw("Logged in as ");
-                                : user;
-                                : Raw(" ");
-                            } else {
-                                : Raw("Browsing anonymously ");
-                            }
-                            a(href="/login") { : Raw("login") }
+                        @ if let Some(user) = user_name {
+                            : Raw("Logged in as ");
+                            : user;
+                            : Raw(" ");
+                        } else {
+                            : Raw("Browsing anonymously ");
                         }
+                        a(href="/login") { : Raw("login") }
                     }
                     div(class="entry header share") {
                         div { : Raw("Name") }
