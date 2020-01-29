@@ -2,6 +2,7 @@ use crate::error::Error;
 use bytesize::ByteSize;
 use chrono::{DateTime, Local};
 use chrono_humanize::HumanTime;
+use percent_encoding::{AsciiSet, CONTROLS};
 use std::fs::{self, DirEntry};
 
 #[derive(Debug)]
@@ -83,9 +84,10 @@ fn display_name(mut name: String, is_dir: bool) -> String {
 }
 
 fn encode_link(name: &str, is_dir: bool) -> String {
-    let mut s =
-        percent_encoding::percent_encode(name.as_bytes(), percent_encoding::NON_ALPHANUMERIC)
-            .to_string();
+    const FRAGMENT: &AsciiSet = &CONTROLS.add(b' ').add(b'"').add(b'<').add(b'>').add(b'`');
+    const PATH: &AsciiSet = &FRAGMENT.add(b'#').add(b'?').add(b'{').add(b'}');
+
+    let mut s = percent_encoding::percent_encode(name.as_bytes(), PATH).to_string();
     if is_dir {
         s.push('/');
     }
