@@ -91,6 +91,13 @@ pub fn not_found() -> Response<Body> {
         .unwrap()
 }
 
+pub fn method_not_allowed() -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::METHOD_NOT_ALLOWED)
+        .body(Body::empty())
+        .unwrap()
+}
+
 pub fn internal_server_error() -> Response<Body> {
     Response::builder()
         .status(StatusCode::INTERNAL_SERVER_ERROR)

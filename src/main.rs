@@ -315,13 +315,15 @@ impl RustyShare {
                 let r = Self::lookup_share(&self.root, &self.store, &share_name, user_id).await;
                 match r {
                     Ok(share_path) => {
-                        if parts.method == Method::GET {
+                        if parts.method == Method::GET || parts.method == Method::HEAD {
                             let request = request_from_parts(&parts);
                             RustyShare::browse(share_name, share_path, path, request, user_name)
                                 .await
-                        } else {
+                        } else if parts.method == Method::POST {
                             let files = files_from_body(body).await?;
                             RustyShare::archive(share_path, path, files).await
+                        } else {
+                            Ok(response::method_not_allowed())
                         }
                     }
                     Err(res) => Ok(res),
@@ -491,7 +493,9 @@ impl RustyShare {
             (&Method::POST, "/login") => self.login(parts, body).await,
             (&Method::GET, "/favicon.ico") => self.favicon().await,
             (&Method::GET, "/browse/") => self.browse_shares(parts).await,
-            (&Method::GET, path) | (&Method::POST, path) if path.starts_with("/browse/") => {
+            (&Method::GET, path) | (&Method::HEAD, path) | (&Method::POST, path)
+                if path.starts_with("/browse/") =>
+            {
                 self.browse_or_archive(parts, body).await
             }
             _ => Ok(response::not_found()),
