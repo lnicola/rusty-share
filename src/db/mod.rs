@@ -1,4 +1,4 @@
 pub use self::store::SqliteStore;
 
-mod models;
+pub mod models;
 mod store;

@@ -4,3 +4,9 @@ pub struct User {
     pub name: String,
     pub password: String,
 }
+
+pub enum AccessLevel {
+    Public = 1,
+    Authenticated = 2,
+    Restricted = 3,
+}

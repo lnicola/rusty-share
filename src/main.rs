@@ -1,5 +1,6 @@
 use archive::Archive;
 use authentication::Authentication;
+use db::models::AccessLevel;
 use db::SqliteStore;
 use error::Error;
 use futures::stream::StreamExt;
@@ -537,7 +538,7 @@ async fn run() -> Result<(), Error> {
                 return Ok(());
             }
             Some(Command::CreateShare { ref name, ref path }) => {
-                create_share(store, &name, &path)?;
+                create_share(store, &name, &path, AccessLevel::Restricted)?;
                 return Ok(());
             }
             None => {}
@@ -698,8 +699,13 @@ pub fn reset_password(store: &SqliteStore, name: &str, password: &str) -> Result
     Ok(())
 }
 
-pub fn create_share(store: &SqliteStore, name: &str, path: &str) -> Result<(), Error> {
-    store.create_share(name, &path)?;
+pub fn create_share(
+    store: &SqliteStore,
+    name: &str,
+    path: &str,
+    access_level: AccessLevel,
+) -> Result<(), Error> {
+    store.create_share(name, &path, access_level)?;
     Ok(())
 }
 
