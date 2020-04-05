@@ -34,9 +34,8 @@ pub enum Error {
     Hyper {
         cause: hyper::Error,
     },
-    #[cfg(FALSE)]
     R2d2 {
-        cause: diesel::r2d2::PoolError,
+        cause: r2d2::Error,
     },
 }
 
@@ -85,9 +84,8 @@ impl From<hyper::Error> for Error {
     }
 }
 
-#[cfg(FALSE)]
-impl From<diesel::r2d2::PoolError> for Error {
-    fn from(cause: diesel::r2d2::PoolError) -> Self {
+impl From<r2d2::Error> for Error {
+    fn from(cause: r2d2::Error) -> Self {
         Error::R2d2 { cause }
     }
 }
@@ -112,7 +110,6 @@ impl Display for Error {
             Error::AddrParse { cause, addr } => write!(f, "{} for address {}", cause, addr),
             Error::Rusqlite { cause } => cause.fmt(f),
             Error::Hyper { cause } => cause.fmt(f),
-            #[cfg(FALSE)]
             Error::R2d2 { cause } => cause.fmt(f),
             Error::StreamCancelled => write!(f, "the archiving stream was cancelled unexpectedly"),
             Error::InvalidArgument => write!(f, "invalid argument"),
