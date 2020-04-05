@@ -17,6 +17,7 @@ use hyper::{Body, Server};
 use log::{error, info};
 use mime_guess;
 use options::{Command, Options};
+use os_str_bytes::{OsStrBytes, OsStringBytes};
 use pipe::Pipe;
 use pretty_env_logger;
 use rand::{self, Rng};
@@ -150,13 +151,15 @@ impl RegisterForm {
     }
 }
 
-async fn files_from_body(body: Body) -> Result<Vec<String>, Error> {
+async fn files_from_body(body: Body) -> Result<Vec<OsString>, Error> {
     let bytes = body::to_bytes(body).await?;
     let files = form_urlencoded::parse(bytes.as_ref())
         .filter_map(|p| {
             if p.0 == "s" {
                 let percent_decoded = Cow::from(percent_encoding::percent_decode_str(p.1.as_ref()));
-                String::from_utf8(percent_decoded.into_owned()).ok()
+                OsString::from_bytes(percent_decoded.into_owned())
+                    .map_err(|e| error!("cannot decode {}: {}", p.1, e))
+                    .ok()
             } else {
                 None
             }
@@ -443,7 +446,11 @@ impl RustyShare {
         Ok(response)
     }
 
-    async fn archive(share: PathBuf, path: PathBuf, files: Vec<String>) -> Result<Response, Error> {
+    async fn archive(
+        share: PathBuf,
+        path: PathBuf,
+        files: Vec<OsString>,
+    ) -> Result<Response, Error> {
         let disk_path = share.join(&path);
         task::block_in_place(move || {
             let mut files = files.iter().map(PathBuf::from).collect::<Vec<_>>();
@@ -568,16 +575,10 @@ async fn run() -> Result<(), Error> {
     Ok(server.await?)
 }
 
-fn osstr_from_bytes(bytes: &[u8]) -> Result<&OsStr, Error> {
-    // NOTE: this is too conservative, as we are rejecting valid paths on Unix
-    str::from_utf8(bytes)
-        .map_err(|_e| Error::InvalidArgument)
-        .map(|s| OsStr::new(s))
-}
-
 fn decode(s: &str) -> Result<OsString, Error> {
     let percent_decoded = Cow::from(percent_encoding::percent_decode_str(s));
-    Ok(osstr_from_bytes(percent_decoded.as_ref())?.to_os_string())
+    let os_str = OsString::from_bytes(percent_decoded).map_err(|_e| Error::InvalidArgument)?;
+    Ok(os_str)
 }
 
 fn request_from_parts(req: &Parts) -> Request<()> {
@@ -658,7 +659,7 @@ fn get_dir_entries(path: &Path) -> Result<Vec<ShareEntry>, Error> {
 }
 
 pub fn is_hidden(path: &OsStr) -> bool {
-    path.to_string_lossy().starts_with('.')
+    matches!(path.to_bytes().as_ref().iter().next(), Some(b'.'))
 }
 
 fn render_index(

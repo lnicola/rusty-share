@@ -838,6 +838,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2839e79665f131bdb5782e51f2c6c9599c133c6098982a54c794358bf432529c"
 
 [[package]]
+name = "os_str_bytes"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d0e5ea29451bbe1a24765e76ad02c913a55b2c8ec1282603dfc1280ece69271"
+
+[[package]]
 name = "parking_lot"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1134,6 +1140,7 @@ dependencies = [
  "libsqlite3-sys",
  "log",
  "mime_guess",
+ "os_str_bytes",
  "percent-encoding",
  "pretty_env_logger",
  "rand",

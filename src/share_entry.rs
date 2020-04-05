@@ -2,6 +2,7 @@ use crate::error::Error;
 use bytesize::ByteSize;
 use chrono::{DateTime, Local};
 use chrono_humanize::HumanTime;
+use os_str_bytes::OsStringBytes;
 use percent_encoding::{AsciiSet, CONTROLS};
 use std::fs::{self, DirEntry};
 
@@ -49,12 +50,9 @@ impl ShareEntry {
         }
 
         let is_dir = metadata.file_type().is_dir();
-        let name = value
-            .file_name()
-            .into_string()
-            .map_err(|_| Error::invalid_filename(value.path()))?;
-        let link = encode_link(&name, is_dir);
-        let display_name = display_name(name, is_dir);
+        let name = value.file_name();
+        let display_name = display_name(name.to_string_lossy().into_owned(), is_dir);
+        let link = encode_link(name.into_vec().as_ref(), is_dir);
         let size = if !is_dir {
             ByteSize::b(metadata.len()).to_string_as(false)
         } else {
@@ -83,11 +81,11 @@ fn display_name(mut name: String, is_dir: bool) -> String {
     name
 }
 
-fn encode_link(name: &str, is_dir: bool) -> String {
+fn encode_link(name: &[u8], is_dir: bool) -> String {
     const FRAGMENT: &AsciiSet = &CONTROLS.add(b' ').add(b'"').add(b'<').add(b'>').add(b'`');
     const PATH: &AsciiSet = &FRAGMENT.add(b'#').add(b'?').add(b'{').add(b'}');
 
-    let mut s = percent_encoding::percent_encode(name.as_bytes(), PATH).to_string();
+    let mut s = percent_encoding::percent_encode(name, PATH).to_string();
     if is_dir {
         s.push('/');
     }
@@ -100,9 +98,9 @@ mod tests {
 
     #[test]
     fn link_encoding() {
-        assert_eq!(encode_link("foo", false), "foo");
-        assert_eq!(encode_link("foo bar", false), "foo%20bar");
-        assert_eq!(encode_link("foo bar", true), "foo%20bar/");
+        assert_eq!(encode_link(b"foo", false), "foo");
+        assert_eq!(encode_link(b"foo bar", false), "foo%20bar");
+        assert_eq!(encode_link(b"foo bar", true), "foo%20bar/");
     }
 
     #[test]
