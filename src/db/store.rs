@@ -10,15 +10,14 @@ type DbResult<T> = Result<T, Error>;
 #[derive(Clone)]
 pub struct SqliteStore {
     pool: Pool<SqliteConnectionManager>,
-    url: String,
 }
 
 impl SqliteStore {
-    pub fn new(url: &str) -> Self {
-        Self {
-            pool: Pool::new(SqliteConnectionManager::file(url)).unwrap(),
-            url: url.to_string(),
-        }
+    pub fn new(url: &str) -> DbResult<Self> {
+        let store = Self {
+            pool: Pool::new(SqliteConnectionManager::file(url))?,
+        };
+        Ok(store)
     }
 
     pub fn initialize_database(&self) -> DbResult<()> {
@@ -189,7 +188,7 @@ mod tests {
     use crate::db::models::AccessLevel;
 
     fn get_store() -> DbResult<SqliteStore> {
-        let store = SqliteStore::new(":memory:");
+        let store = SqliteStore::new(":memory:")?;
         store.initialize_database()?;
         Ok(store)
     }

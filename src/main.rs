@@ -515,7 +515,7 @@ async fn run() -> Result<(), Error> {
 
     let store: Option<SqliteStore> = options.db.as_ref().map(|db| {
         let should_initialize = !Path::new(&db).exists();
-        let store = SqliteStore::new(db);
+        let store = SqliteStore::new(db).unwrap();
 
         if should_initialize {
             info!("Initializing database");
