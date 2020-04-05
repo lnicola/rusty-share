@@ -1,4 +1,3 @@
-use diesel;
 use std::error;
 use std::fmt::{self, Display, Formatter};
 use std::io;
@@ -27,14 +26,15 @@ pub enum Error {
         cause: AddrParseError,
         addr: String,
     },
-    Diesel {
-        cause: diesel::result::Error,
+    Rusqlite {
+        cause: rusqlite::Error,
     },
     StreamCancelled,
     InvalidArgument,
     Hyper {
         cause: hyper::Error,
     },
+    #[cfg(FALSE)]
     R2d2 {
         cause: diesel::r2d2::PoolError,
     },
@@ -73,9 +73,9 @@ impl From<walkdir::Error> for Error {
     }
 }
 
-impl From<diesel::result::Error> for Error {
-    fn from(cause: diesel::result::Error) -> Self {
-        Error::Diesel { cause }
+impl From<rusqlite::Error> for Error {
+    fn from(cause: rusqlite::Error) -> Self {
+        Error::Rusqlite { cause }
     }
 }
 
@@ -85,6 +85,7 @@ impl From<hyper::Error> for Error {
     }
 }
 
+#[cfg(FALSE)]
 impl From<diesel::r2d2::PoolError> for Error {
     fn from(cause: diesel::r2d2::PoolError) -> Self {
         Error::R2d2 { cause }
@@ -109,8 +110,9 @@ impl Display for Error {
                 base.display(),
             ),
             Error::AddrParse { cause, addr } => write!(f, "{} for address {}", cause, addr),
-            Error::Diesel { cause } => cause.fmt(f),
+            Error::Rusqlite { cause } => cause.fmt(f),
             Error::Hyper { cause } => cause.fmt(f),
+            #[cfg(FALSE)]
             Error::R2d2 { cause } => cause.fmt(f),
             Error::StreamCancelled => write!(f, "the archiving stream was cancelled unexpectedly"),
             Error::InvalidArgument => write!(f, "invalid argument"),

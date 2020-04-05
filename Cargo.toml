@@ -11,7 +11,6 @@ bytesize = "1.0"
 byteorder = "1.3"
 chrono = { version = "0.4", default-features = false }
 chrono-humanize = "0.0.11"
-diesel = { version = "1.4", default-features = false, features = ["chrono", "r2d2", "sqlite"] }
 futures = { version = "0.3" }
 headers = "0.3"
 hex = "0.4"
@@ -26,7 +25,7 @@ percent-encoding = "2.1"
 pretty_env_logger = "0.4"
 rand = "0.7"
 rayon = "1.3"
-libsqlite3-sys = "0.17"
+rusqlite = "0.21"
 scrypt = { version = "0.2", default-features = false }
 structopt = "0.3"
 subtle = "2.2"
@@ -36,7 +35,10 @@ url = "2.1"
 walkdir = "2.3"
 
 [features]
-default = ["bundled-windows"]
+# default = ["bundled-windows"]
 
-bundled-sqlite = ["libsqlite3-sys/bundled"]
-bundled-windows = ["libsqlite3-sys/bundled-windows"]
+bundled-sqlite = ["rusqlite/bundled"]
+# bundled-windows = ["rusqlite/bundled-windows"]
+
+[profile.release.build-override]
+opt-level = 0

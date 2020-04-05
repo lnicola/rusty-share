@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate diesel;
-
 use archive::Archive;
 use authentication::Authentication;
 use db::SqliteStore;
