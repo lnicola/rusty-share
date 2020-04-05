@@ -1101,6 +1101,7 @@ dependencies = [
  "http",
  "http-serve",
  "hyper",
+ "libsqlite3-sys",
  "log",
  "mime_guess",
  "os_str_bytes",
