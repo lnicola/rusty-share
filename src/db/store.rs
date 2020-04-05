@@ -194,177 +194,160 @@ mod tests {
     }
 
     #[test]
-    fn initialize() {
-        get_store().unwrap();
+    fn initialize() -> DbResult<()> {
+        get_store()?;
+        Ok(())
     }
 
     #[test]
-    fn users_exists() {
-        let store = get_store().unwrap();
-        assert!(!store.users_exist().unwrap());
-        store.insert_user("test_user", "breakme").unwrap();
-        assert!(store.users_exist().unwrap());
+    fn users_exists() -> DbResult<()> {
+        let store = get_store()?;
+        assert!(!store.users_exist()?);
+        store.insert_user("test_user", "breakme")?;
+        assert!(store.users_exist()?);
+        Ok(())
     }
 
     #[test]
-    fn find_user() {
-        let store = get_store().unwrap();
-        assert!(store.find_user("test_user").unwrap().is_none());
-        store.insert_user("test_user", "breakme").unwrap();
-        let user = store.find_user("test_user").unwrap().unwrap();
-        assert!(user.name == "test_user");
-        assert!(user.password == "breakme");
+    fn find_user() -> DbResult<()> {
+        let store = get_store()?;
+        assert!(store.find_user("test_user")?.is_none());
+        store.insert_user("test_user", "breakme")?;
+        let user = store.find_user("test_user")?.unwrap();
+        assert_eq!(user.name, "test_user");
+        assert_eq!(user.password, "breakme");
+        Ok(())
     }
 
     #[test]
-    fn update_password_by_id() {
-        let store = get_store().unwrap();
-        let id = store.insert_user("test_user", "breakme").unwrap();
-        store.update_password_by_id(id, "betterpass").unwrap();
-        let user = store.find_user("test_user").unwrap().unwrap();
-        assert!(user.name == "test_user");
-        assert!(user.password == "betterpass");
+    fn update_password_by_id() -> DbResult<()> {
+        let store = get_store()?;
+        let id = store.insert_user("test_user", "breakme")?;
+        store.update_password_by_id(id, "betterpass")?;
+        let user = store.find_user("test_user")?.unwrap();
+        assert_eq!(user.name, "test_user");
+        assert_eq!(user.password, "betterpass");
+        Ok(())
     }
 
     #[test]
-    fn update_password_by_name() {
-        let store = get_store().unwrap();
-        store.insert_user("test_user", "breakme").unwrap();
-        store
-            .update_password_by_name("test_user", "betterpass")
-            .unwrap();
-        let user = store.find_user("test_user").unwrap().unwrap();
-        assert!(user.name == "test_user");
-        assert!(user.password == "betterpass");
+    fn update_password_by_name() -> DbResult<()> {
+        let store = get_store()?;
+        store.insert_user("test_user", "breakme")?;
+        store.update_password_by_name("test_user", "betterpass")?;
+        let user = store.find_user("test_user")?.unwrap();
+        assert_eq!(user.name, "test_user");
+        assert_eq!(user.password, "betterpass");
+        Ok(())
     }
 
     #[test]
-    fn lookup_session() {
-        let store = get_store().unwrap();
-        let user_id = store.insert_user("test_user", "breakme").unwrap();
-        assert!(store.lookup_session(b"1234").unwrap().is_none());
-        store.create_session(b"1234", user_id).unwrap();
+    fn lookup_session() -> DbResult<()> {
+        let store = get_store()?;
+        let user_id = store.insert_user("test_user", "breakme")?;
+        assert!(store.lookup_session(b"1234")?.is_none());
+        store.create_session(b"1234", user_id)?;
         assert_eq!(
-            store.lookup_session(b"1234").unwrap().unwrap(),
-            (user_id, String::from("test_user"))
+            store.lookup_session(b"1234")?,
+            Some((user_id, String::from("test_user")))
         );
+        Ok(())
     }
 
     #[test]
-    fn lookup_share_public() {
-        let store = get_store().unwrap();
-        assert!(store.lookup_share("public_share", None).unwrap().is_none());
-        store
-            .create_share("public_share", "public", AccessLevel::Public)
-            .unwrap();
+    fn lookup_share_public() -> DbResult<()> {
+        let store = get_store()?;
+        assert!(store.lookup_share("public_share", None)?.is_none());
+        store.create_share("public_share", "public", AccessLevel::Public)?;
         assert_eq!(
-            store.lookup_share("public_share", None).unwrap().unwrap(),
-            PathBuf::from("public")
+            store.lookup_share("public_share", None)?,
+            Some(PathBuf::from("public"))
         );
+        Ok(())
     }
 
     #[test]
-    fn lookup_share_authenticated() {
-        let store = get_store().unwrap();
-        let user_id = store.insert_user("test_user", "breakme").unwrap();
-        store
-            .create_share(
-                "authenticated_share",
-                "authenticated",
-                AccessLevel::Authenticated,
-            )
-            .unwrap();
-        assert!(store
-            .lookup_share("authenticated_share", None)
-            .unwrap()
-            .is_none());
+    fn lookup_share_authenticated() -> DbResult<()> {
+        let store = get_store()?;
+        let user_id = store.insert_user("test_user", "breakme")?;
+        store.create_share(
+            "authenticated_share",
+            "authenticated",
+            AccessLevel::Authenticated,
+        )?;
+        assert!(store.lookup_share("authenticated_share", None)?.is_none());
         assert_eq!(
-            store
-                .lookup_share("authenticated_share", Some(user_id))
-                .unwrap()
-                .unwrap(),
-            PathBuf::from("authenticated")
+            store.lookup_share("authenticated_share", Some(user_id))?,
+            Some(PathBuf::from("authenticated"))
         );
+        Ok(())
     }
 
     #[test]
-    fn lookup_share_restricted() {
-        let store = get_store().unwrap();
-        let user_id = store.insert_user("test_user", "breakme").unwrap();
-        let another_user_id = store.insert_user("test_user2", "metoo").unwrap();
-        let share_id = store
-            .create_share("restricted_share", "restricted", AccessLevel::Restricted)
-            .unwrap();
+    fn lookup_share_restricted() -> DbResult<()> {
+        let store = get_store()?;
+        let user_id = store.insert_user("test_user", "breakme")?;
+        let another_user_id = store.insert_user("test_user2", "metoo")?;
+        let share_id =
+            store.create_share("restricted_share", "restricted", AccessLevel::Restricted)?;
+        assert!(store.lookup_share("restricted_share", None)?.is_none());
         assert!(store
-            .lookup_share("restricted_share", None)
-            .unwrap()
+            .lookup_share("restricted_share", Some(user_id))?
             .is_none());
-        assert!(store
-            .lookup_share("restricted_share", Some(user_id))
-            .unwrap()
-            .is_none());
-        store.grant_user_share(user_id, share_id).unwrap();
+        store.grant_user_share(user_id, share_id)?;
         assert_eq!(
-            store
-                .lookup_share("restricted_share", Some(user_id))
-                .unwrap()
-                .unwrap(),
-            PathBuf::from("restricted")
+            store.lookup_share("restricted_share", Some(user_id))?,
+            Some(PathBuf::from("restricted"))
         );
         assert!(store
-            .lookup_share("restricted_share", Some(another_user_id))
-            .unwrap()
+            .lookup_share("restricted_share", Some(another_user_id))?
             .is_none());
-        store.revoke_user_share(user_id, share_id).unwrap();
+        store.revoke_user_share(user_id, share_id)?;
         assert!(store
-            .lookup_share("restricted_share", Some(user_id))
-            .unwrap()
+            .lookup_share("restricted_share", Some(user_id))?
             .is_none());
+        Ok(())
     }
 
     #[test]
-    fn get_share_names() {
-        let store = get_store().unwrap();
-        let user_id = store.insert_user("test_user", "breakme").unwrap();
-        let another_user_id = store.insert_user("test_user2", "metoo").unwrap();
+    fn get_share_names() -> DbResult<()> {
+        let store = get_store()?;
+        let user_id = store.insert_user("test_user", "breakme")?;
+        let another_user_id = store.insert_user("test_user2", "metoo")?;
 
-        store
-            .create_share("public_share", "public", AccessLevel::Public)
-            .unwrap();
-        store
-            .create_share(
-                "authenticated_share",
-                "authenticated",
-                AccessLevel::Authenticated,
-            )
-            .unwrap();
-        let share_id = store
-            .create_share("restricted_share", "restricted", AccessLevel::Restricted)
-            .unwrap();
+        store.create_share("public_share", "public", AccessLevel::Public)?;
+        store.create_share(
+            "authenticated_share",
+            "authenticated",
+            AccessLevel::Authenticated,
+        )?;
+        let share_id =
+            store.create_share("restricted_share", "restricted", AccessLevel::Restricted)?;
 
-        assert_eq!(store.get_share_names(None).unwrap(), ["public_share"]);
+        assert_eq!(store.get_share_names(None)?, ["public_share"]);
         let get_shares = |user_id| -> DbResult<Vec<String>> {
             let mut shares = store.get_share_names(user_id)?;
             shares.sort();
             Ok(shares)
         };
         assert_eq!(
-            get_shares(Some(user_id)).unwrap(),
+            get_shares(Some(user_id))?,
             ["authenticated_share", "public_share"]
         );
-        store.grant_user_share(user_id, share_id).unwrap();
+        store.grant_user_share(user_id, share_id)?;
         assert_eq!(
-            get_shares(Some(user_id)).unwrap(),
+            get_shares(Some(user_id))?,
             ["authenticated_share", "public_share", "restricted_share"]
         );
         assert_eq!(
-            get_shares(Some(another_user_id)).unwrap(),
+            get_shares(Some(another_user_id))?,
             ["authenticated_share", "public_share"]
         );
-        store.revoke_user_share(user_id, share_id).unwrap();
+        store.revoke_user_share(user_id, share_id)?;
         assert_eq!(
-            get_shares(Some(user_id)).unwrap(),
+            get_shares(Some(user_id))?,
             ["authenticated_share", "public_share"]
         );
+        Ok(())
     }
 }
