@@ -70,7 +70,7 @@ pub fn index(
                 }
                 @ if upload_allowed {
                     form(method="POST") {
-                        input(type="file", id="file");
+                        input(type="file", id="file", multiple);
                         input(type="button", id="upload", value="Upload");
                     }
                 }
