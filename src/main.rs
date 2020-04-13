@@ -188,7 +188,7 @@ impl RustyShare {
                     name: String::from("public"),
                     path: root.to_path_buf(),
                     access_level: AccessLevel::Public,
-                    upload_allowed: true,
+                    upload_allowed: false,
                 })
             } else {
                 Err(response::not_found())
@@ -324,8 +324,7 @@ impl RustyShare {
                 match r {
                     Ok(share) => {
                         if request.method() == Method::GET || request.method() == Method::HEAD {
-                            RustyShare::browse(share_name, share.path, path, request, user_name)
-                                .await
+                            RustyShare::browse(share, path, request, user_name).await
                         } else if request.method() == Method::POST {
                             let files = files_from_body(request.into_body()).await?;
                             RustyShare::archive(share.path, path, files).await
@@ -492,13 +491,12 @@ impl RustyShare {
     }
 
     async fn browse(
-        share_name: String,
-        share: PathBuf,
+        share: Share,
         path: PathBuf,
         request: Request<Body>,
         user_name: Option<String>,
     ) -> Result<Response, Error> {
-        let disk_path = share.join(&path);
+        let disk_path = share.path.join(&path);
         let uri_path = request.uri().path().to_string();
 
         let metadata = tokio::fs::metadata(&disk_path).await;
@@ -509,7 +507,13 @@ impl RustyShare {
                         response::found(&(uri_path + "/"))
                     } else {
                         task::block_in_place(move || {
-                            render_index(&share_name, &path, &disk_path, user_name)
+                            render_index(
+                                &share.name,
+                                &path,
+                                &disk_path,
+                                share.upload_allowed,
+                                user_name,
+                            )
                         })
                     }
                 } else {
@@ -755,6 +759,7 @@ fn render_index(
     share_name: &str,
     relative_path: &Path,
     path: &Path,
+    upload_allowed: bool,
     user_name: Option<String>,
 ) -> Response {
     let enumerate_start = Instant::now();
@@ -762,7 +767,13 @@ fn render_index(
         Ok(entries) => {
             let render_start = Instant::now();
             let enumerate_time = render_start - enumerate_start;
-            let rendered = page::index(share_name, &relative_path, &entries, user_name);
+            let rendered = page::index(
+                share_name,
+                &relative_path,
+                &entries,
+                upload_allowed,
+                user_name,
+            );
             let render_time = Instant::now() - render_start;
             info!(
                 "enumerate: {} ms, render: {} ms",

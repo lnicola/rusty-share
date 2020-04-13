@@ -13,6 +13,7 @@ pub fn index(
     share_name: &str,
     path: &Path,
     entries: &[ShareEntry],
+    upload_allowed: bool,
     user_name: Option<String>,
 ) -> Response<Body> {
     let page = html! {
@@ -27,7 +28,9 @@ pub fn index(
                     : path.to_string_lossy().as_ref();
                 }
                 style { : Raw(include_str!("../assets/style.css")); }
-                script { : Raw(include_str!("../assets/index.js")); }
+                @ if upload_allowed {
+                    script { : Raw(include_str!("../assets/index.js")); }
+                }
             }
             body {
                 form(method="POST") {
@@ -65,9 +68,11 @@ pub fn index(
                     }
                     input(type="submit", value="Download");
                 }
-                form(method="POST") {
-                    input(type="file", id="file");
-                    input(type="button", id="upload", value="Upload");
+                @ if upload_allowed {
+                    form(method="POST") {
+                        input(type="file", id="file");
+                        input(type="button", id="upload", value="Upload");
+                    }
                 }
             }
         }
