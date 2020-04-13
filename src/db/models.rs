@@ -1,8 +1,9 @@
 use os_str_bytes::OsStringBytes;
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, ValueRef};
 use rusqlite::{Error, Row, ToSql};
-use std::ffi::OsString;
-use std::{convert::TryFrom, path::PathBuf};
+
+use std::convert::TryFrom;
+use std::path::PathBuf;
 
 #[derive(PartialEq, Eq, Debug)]
 pub struct User {
@@ -100,9 +101,9 @@ struct PathBufWrapper(PathBuf);
 impl FromSql for PathBufWrapper {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         match value {
-            ValueRef::Text(p) | ValueRef::Blob(p) => Ok(Self(PathBuf::from(
-                OsString::from_bytes(p).map_err(|e| FromSqlError::Other(e.into()))?,
-            ))),
+            ValueRef::Text(p) | ValueRef::Blob(p) => Ok(Self(
+                PathBuf::from_bytes(p).map_err(|e| FromSqlError::Other(e.into()))?,
+            )),
             _ => Err(FromSqlError::InvalidType),
         }
     }

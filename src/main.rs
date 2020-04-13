@@ -20,7 +20,7 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
 use share_entry::ShareEntry;
 use std::borrow::Cow;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::fs::{self, DirEntry};
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Component, Path, PathBuf};
@@ -148,13 +148,13 @@ impl RegisterForm {
     }
 }
 
-async fn files_from_body(body: Body) -> Result<Vec<OsString>, Error> {
+async fn files_from_body(body: Body) -> Result<Vec<PathBuf>, Error> {
     let bytes = body::to_bytes(body).await?;
     let files = form_urlencoded::parse(bytes.as_ref())
         .filter_map(|p| {
             if p.0 == "s" {
                 let percent_decoded = Cow::from(percent_encoding::percent_decode_str(p.1.as_ref()));
-                OsString::from_bytes(percent_decoded.into_owned())
+                PathBuf::from_bytes(percent_decoded.into_owned())
                     .map_err(|e| error!("cannot decode {}: {}", p.1, e))
                     .ok()
             } else {
@@ -274,8 +274,7 @@ impl RustyShare {
         let authentication = Self::get_authentication(&self.store, &request);
         let pb = decode(request.uri().path())
             .map(|s| {
-                PathBuf::from(s)
-                    .components()
+                s.components()
                     .skip(2)
                     .map(|c| Path::new(c.as_os_str()))
                     .collect::<PathBuf>()
@@ -351,8 +350,7 @@ impl RustyShare {
         let authentication = Self::get_authentication(&self.store, &request);
         let pb = decode(request.uri().path())
             .map(|s| {
-                PathBuf::from(s)
-                    .components()
+                s.components()
                     .skip(2)
                     .map(|c| Path::new(c.as_os_str()))
                     .collect::<PathBuf>()
@@ -555,11 +553,10 @@ impl RustyShare {
     async fn archive(
         share: PathBuf,
         path: PathBuf,
-        files: Vec<OsString>,
+        mut files: Vec<PathBuf>,
     ) -> Result<Response, Error> {
         let disk_path = share.join(&path);
         task::block_in_place(move || {
-            let mut files = files.iter().map(PathBuf::from).collect::<Vec<_>>();
             if files.is_empty() {
                 for entry in dir_entries(&disk_path)? {
                     let path = entry.path();
@@ -685,9 +682,9 @@ async fn run() -> Result<(), Error> {
     Ok(server.await?)
 }
 
-fn decode(s: &str) -> Result<OsString, Error> {
+fn decode(s: &str) -> Result<PathBuf, Error> {
     let percent_decoded = Cow::from(percent_encoding::percent_decode_str(s));
-    let os_str = OsString::from_bytes(percent_decoded).map_err(|_e| Error::InvalidArgument)?;
+    let os_str = PathBuf::from_bytes(percent_decoded).map_err(|_e| Error::InvalidArgument)?;
     Ok(os_str)
 }
 

@@ -1,9 +1,11 @@
 use super::models::{NewShare, NewUser, Share, User};
 use crate::Error;
+
 use os_str_bytes::OsStrBytes;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, OptionalExtension, NO_PARAMS};
+
 use std::convert::TryFrom;
 
 type DbResult<T> = Result<T, Error>;
@@ -157,7 +159,7 @@ impl SqliteStore {
             "insert into shares(name, path, access_level, upload_allowed) values(?, ?, ?, ?)",
             params![
                 share.name,
-                share.path.as_os_str().to_bytes().as_ref(),
+                share.path.to_bytes().as_ref(),
                 share.access_level as i32,
                 share.upload_allowed
             ],
