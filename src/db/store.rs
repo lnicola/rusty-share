@@ -1,9 +1,10 @@
-use super::models::{AccessLevel, User};
+use super::models::{NewShare, Share, User};
 use crate::Error;
+use os_str_bytes::OsStrBytes;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, OptionalExtension, NO_PARAMS};
-use std::path::PathBuf;
+use std::convert::TryFrom;
 
 type DbResult<T> = Result<T, Error>;
 
@@ -107,33 +108,32 @@ impl SqliteStore {
         Ok(r)
     }
 
-    pub fn lookup_share(&self, name: &str, user_id: Option<i32>) -> DbResult<Option<PathBuf>> {
+    pub fn lookup_share(&self, name: &str, user_id: Option<i32>) -> DbResult<Option<Share>> {
         let conn = self.pool.get()?;
         let share = conn
             .query_row(
-                "select path
-                      from shares
-                      where name = ?
-                        and (access_level = 1
-                          or access_level = 2 and ? is not null
-                          or access_level = 3 and exists (
-                              select *
-                              from user_shares
-                              where user_id = ? and share_id = shares.id
-                          )
-                        )",
+                "select *
+                 from shares
+                 where name = ?
+                 and (access_level = 1
+                      or access_level = 2 and ? is not null
+                      or access_level = 3 and exists (
+                         select *
+                         from user_shares
+                         where user_id = ? and share_id = shares.id
+                      )
+                 )",
                 params![name, user_id, user_id],
-                |row| row.get::<_, String>(0),
+                |row| Share::try_from(row),
             )
-            .map(PathBuf::from)
             .optional()?;
         Ok(share)
     }
 
-    pub fn get_share_names(&self, user_id: Option<i32>) -> DbResult<Vec<String>> {
+    pub fn get_accessible_shares(&self, user_id: Option<i32>) -> DbResult<Vec<Share>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
-            "select name
+            "select *
              from shares
              where (access_level = 1
                  or access_level = 2 and ? is not null
@@ -146,19 +146,30 @@ impl SqliteStore {
              order by id",
         )?;
         let shares = stmt
-            .query_map(params![user_id, user_id], |row| row.get::<_, String>(0))?
+            .query_map(params![user_id, user_id], |row| Share::try_from(row))?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(shares)
     }
 
-    pub fn create_share(&self, name: &str, path: &str, access_level: AccessLevel) -> DbResult<i32> {
+    pub fn create_share(&self, share: NewShare) -> DbResult<Share> {
         let conn = self.pool.get()?;
         conn.execute(
-            "insert into shares(name, path, access_level) values(?, ?, ?)",
-            params![name, path, access_level as i32],
+            "insert into shares(name, path, access_level, upload_allowed) values(?, ?, ?, ?)",
+            params![
+                share.name,
+                share.path.as_os_str().to_bytes().as_ref(),
+                share.access_level as i32,
+                share.upload_allowed
+            ],
         )?;
-        let id = conn.last_insert_rowid() as i32;
-        Ok(id)
+        let share = Share {
+            id: conn.last_insert_rowid() as i32,
+            name: share.name,
+            path: share.path,
+            access_level: share.access_level,
+            upload_allowed: share.upload_allowed,
+        };
+        Ok(share)
     }
 
     pub fn grant_user_share(&self, user_id: i32, share_id: i32) -> DbResult<()> {
@@ -185,7 +196,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{DbResult, SqliteStore};
-    use crate::db::models::AccessLevel;
+    use crate::db::models::{AccessLevel, NewShare};
 
     fn get_store() -> DbResult<SqliteStore> {
         let store = SqliteStore::new(":memory:")?;
@@ -257,12 +268,17 @@ mod tests {
     #[test]
     fn lookup_share_public() -> DbResult<()> {
         let store = get_store()?;
-        assert!(store.lookup_share("public_share", None)?.is_none());
-        store.create_share("public_share", "public", AccessLevel::Public)?;
-        assert_eq!(
-            store.lookup_share("public_share", None)?,
-            Some(PathBuf::from("public"))
-        );
+        let name = String::from("public_share");
+        let path = PathBuf::from("public");
+        assert!(store.lookup_share(&name, None)?.is_none());
+        let share = NewShare {
+            name,
+            path,
+            access_level: AccessLevel::Public,
+            upload_allowed: false,
+        };
+        let share = store.create_share(share)?;
+        assert_eq!(store.lookup_share(&share.name, None)?, Some(share));
         Ok(())
     }
 
@@ -270,15 +286,19 @@ mod tests {
     fn lookup_share_authenticated() -> DbResult<()> {
         let store = get_store()?;
         let user_id = store.insert_user("test_user", "breakme")?;
-        store.create_share(
-            "authenticated_share",
-            "authenticated",
-            AccessLevel::Authenticated,
-        )?;
+        let name = String::from("authenticated_share");
+        let path = PathBuf::from("authenticated");
+        let share = NewShare {
+            name,
+            path,
+            access_level: AccessLevel::Authenticated,
+            upload_allowed: false,
+        };
+        let share = store.create_share(share)?;
         assert!(store.lookup_share("authenticated_share", None)?.is_none());
         assert_eq!(
             store.lookup_share("authenticated_share", Some(user_id))?,
-            Some(PathBuf::from("authenticated"))
+            Some(share)
         );
         Ok(())
     }
@@ -288,21 +308,27 @@ mod tests {
         let store = get_store()?;
         let user_id = store.insert_user("test_user", "breakme")?;
         let another_user_id = store.insert_user("test_user2", "metoo")?;
-        let share_id =
-            store.create_share("restricted_share", "restricted", AccessLevel::Restricted)?;
+        let share = NewShare {
+            name: String::from("restricted_share"),
+            path: PathBuf::from("restricted"),
+            access_level: AccessLevel::Restricted,
+            upload_allowed: false,
+        };
+        let share = store.create_share(share)?;
         assert!(store.lookup_share("restricted_share", None)?.is_none());
         assert!(store
             .lookup_share("restricted_share", Some(user_id))?
             .is_none());
-        store.grant_user_share(user_id, share_id)?;
+        store.grant_user_share(user_id, share.id)?;
+        let id = share.id;
         assert_eq!(
             store.lookup_share("restricted_share", Some(user_id))?,
-            Some(PathBuf::from("restricted"))
+            Some(share)
         );
         assert!(store
             .lookup_share("restricted_share", Some(another_user_id))?
             .is_none());
-        store.revoke_user_share(user_id, share_id)?;
+        store.revoke_user_share(user_id, id)?;
         assert!(store
             .lookup_share("restricted_share", Some(user_id))?
             .is_none());
@@ -315,38 +341,43 @@ mod tests {
         let user_id = store.insert_user("test_user", "breakme")?;
         let another_user_id = store.insert_user("test_user2", "metoo")?;
 
-        store.create_share("public_share", "public", AccessLevel::Public)?;
-        store.create_share(
-            "authenticated_share",
-            "authenticated",
-            AccessLevel::Authenticated,
-        )?;
-        let share_id =
-            store.create_share("restricted_share", "restricted", AccessLevel::Restricted)?;
+        let public_share = store.create_share(NewShare {
+            name: String::from("public_share"),
+            path: PathBuf::from("public"),
+            access_level: AccessLevel::Public,
+            upload_allowed: false,
+        })?;
+        let authenticated_share = store.create_share(NewShare {
+            name: String::from("authenticated_share"),
+            path: PathBuf::from("authenticated"),
+            access_level: AccessLevel::Authenticated,
+            upload_allowed: false,
+        })?;
+        let restricted_share = store.create_share(NewShare {
+            name: String::from("restricted_share"),
+            path: PathBuf::from("restricted"),
+            access_level: AccessLevel::Restricted,
+            upload_allowed: false,
+        })?;
 
-        assert_eq!(store.get_share_names(None)?, ["public_share"]);
-        let get_shares = |user_id| -> DbResult<Vec<String>> {
-            let mut shares = store.get_share_names(user_id)?;
-            shares.sort();
-            Ok(shares)
-        };
+        assert_eq!(store.get_accessible_shares(None)?, [&public_share]);
         assert_eq!(
-            get_shares(Some(user_id))?,
-            ["authenticated_share", "public_share"]
+            store.get_accessible_shares(Some(user_id))?,
+            [&public_share, &authenticated_share]
         );
-        store.grant_user_share(user_id, share_id)?;
+        store.grant_user_share(user_id, restricted_share.id)?;
         assert_eq!(
-            get_shares(Some(user_id))?,
-            ["authenticated_share", "public_share", "restricted_share"]
+            store.get_accessible_shares(Some(user_id))?,
+            [&public_share, &authenticated_share, &restricted_share]
         );
         assert_eq!(
-            get_shares(Some(another_user_id))?,
-            ["authenticated_share", "public_share"]
+            store.get_accessible_shares(Some(another_user_id))?,
+            [&public_share, &authenticated_share]
         );
-        store.revoke_user_share(user_id, share_id)?;
+        store.revoke_user_share(user_id, restricted_share.id)?;
         assert_eq!(
-            get_shares(Some(user_id))?,
-            ["authenticated_share", "public_share"]
+            store.get_accessible_shares(Some(user_id))?,
+            [&public_share, &authenticated_share]
         );
         Ok(())
     }

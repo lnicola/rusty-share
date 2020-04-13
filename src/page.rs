@@ -1,5 +1,5 @@
+use crate::db::models::Share;
 use crate::response;
-use crate::share::Share;
 use crate::share_entry::ShareEntry;
 use horrorshow::helper::doctype;
 use horrorshow::{html, Raw, Template};
@@ -27,6 +27,7 @@ pub fn index(
                     : path.to_string_lossy().as_ref();
                 }
                 style { : Raw(include_str!("../assets/style.css")); }
+                script { : Raw(include_str!("../assets/index.js")); }
             }
             body {
                 form(method="POST") {
@@ -64,6 +65,10 @@ pub fn index(
                     }
                     input(type="submit", value="Download");
                 }
+                form(method="POST") {
+                    input(type="file", id="file");
+                    input(type="button", id="upload", value="Upload");
+                }
             }
         }
     };
@@ -76,7 +81,7 @@ pub fn index(
     }
 }
 
-pub fn shares(shares: &[Share], user_name: Option<String>) -> Response<Body> {
+pub fn shares(shares: Vec<Share>, user_name: Option<String>) -> Response<Body> {
     let page = html! {
         : doctype::HTML;
         html {
@@ -104,7 +109,7 @@ pub fn shares(shares: &[Share], user_name: Option<String>) -> Response<Body> {
                     }
                     @ for share in shares {
                         div(class="entry share") {
-                            a(href=share.link()) { : share.name() }
+                            a(href=Raw(percent_encoding::utf8_percent_encode(&share.name, percent_encoding::NON_ALPHANUMERIC).to_string())) { : share.name }
                         }
                     }
                 }

@@ -8,7 +8,11 @@ pub enum Command {
     #[structopt(name = "reset-password", about = "Resets a user password")]
     ResetPassword { user: String, pass: String },
     #[structopt(name = "create-share", about = "Creates a new share")]
-    CreateShare { name: String, path: String },
+    CreateShare {
+        name: String,
+        #[structopt(parse(from_os_str))]
+        path: PathBuf,
+    },
 }
 
 #[derive(Debug, StructOpt)]

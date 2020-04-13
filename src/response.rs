@@ -69,6 +69,13 @@ pub fn archive(content_length: u64, body: Body, file_name: &str) -> Response<Bod
         .unwrap()
 }
 
+pub fn no_content() -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::NO_CONTENT)
+        .body(Body::empty())
+        .unwrap()
+}
+
 pub fn found(location: &str) -> Response<Body> {
     Response::builder()
         .status(StatusCode::FOUND)
@@ -80,6 +87,13 @@ pub fn found(location: &str) -> Response<Body> {
 pub fn bad_request() -> Response<Body> {
     Response::builder()
         .status(StatusCode::BAD_REQUEST)
+        .body(Body::empty())
+        .unwrap()
+}
+
+pub fn forbidden() -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::FORBIDDEN)
         .body(Body::empty())
         .unwrap()
 }

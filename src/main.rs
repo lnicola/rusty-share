@@ -1,13 +1,12 @@
 use archive::Archive;
 use authentication::Authentication;
-use db::models::AccessLevel;
+use db::models::{AccessLevel, Share};
 use db::SqliteStore;
 use error::Error;
 use futures::stream::StreamExt;
 use headers::{Cookie, HeaderMapExt};
 use hex;
 use http::header::CONTENT_TYPE;
-use http::request::Parts;
 use http::{HeaderMap, HeaderValue, Method, Request};
 use http_serve::{self, ChunkedReadFile};
 use hyper::{body, service};
@@ -21,7 +20,6 @@ use pretty_env_logger;
 use rand::{self, Rng};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
-use share::Share;
 use share_entry::ShareEntry;
 use std::borrow::Cow;
 use std::ffi::{OsStr, OsString};
@@ -33,6 +31,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use structopt::StructOpt;
 use tar::Builder;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tokio::task;
 use url::form_urlencoded;
@@ -47,7 +46,6 @@ mod page;
 mod pipe;
 mod response;
 mod scrypt_simple;
-mod share;
 mod share_entry;
 
 type Response = http::Response<Body>;
@@ -172,7 +170,7 @@ impl RustyShare {
         store: &Option<SqliteStore>,
         name: &str,
         user_id: Option<i32>,
-    ) -> Result<PathBuf, Response> {
+    ) -> Result<Share, Response> {
         task::block_in_place(move || {
             if let Some(store) = store {
                 let path = store
@@ -184,7 +182,13 @@ impl RustyShare {
                     .ok_or_else(response::not_found)?;
                 Ok(path)
             } else if name == "public" {
-                Ok(root.to_path_buf())
+                Ok(Share {
+                    id: 0,
+                    name: String::from("public"),
+                    path: root.to_path_buf(),
+                    access_level: AccessLevel::Public,
+                    upload_allowed: true,
+                })
             } else {
                 Err(response::not_found())
             }
@@ -197,19 +201,20 @@ impl RustyShare {
     ) -> Result<Vec<Share>, Response> {
         if let Some(store) = store {
             task::block_in_place(move || {
-                let shares = store
-                    .get_share_names(user_id)
-                    .map_err(|e| {
-                        error!("{}", e);
-                        response::internal_server_error()
-                    })?
-                    .into_iter()
-                    .map(Share::new)
-                    .collect::<Vec<_>>();
+                let shares = store.get_accessible_shares(user_id).map_err(|e| {
+                    error!("{}", e);
+                    response::internal_server_error()
+                })?;
                 Ok(shares)
             })
         } else {
-            Ok(vec![Share::new(String::from("public"))])
+            Ok(vec![Share {
+                id: 0,
+                name: String::from("public"),
+                path: PathBuf::new(),
+                access_level: AccessLevel::Public,
+                upload_allowed: false,
+            }])
         }
     }
 
@@ -221,8 +226,8 @@ impl RustyShare {
         Ok(response::not_found())
     }
 
-    async fn login(&self, parts: Parts, body: Body) -> Result<Response, Error> {
-        let redirect = form_urlencoded::parse(parts.uri.query().unwrap_or("").as_bytes())
+    async fn login(&self, request: Request<Body>) -> Result<Response, Error> {
+        let redirect = form_urlencoded::parse(request.uri().query().unwrap_or("").as_bytes())
             .filter_map(|p| {
                 if p.0 == "redirect" {
                     Some(p.1.into_owned())
@@ -231,19 +236,20 @@ impl RustyShare {
                 }
             })
             .next();
-        let form = LoginForm::from_body(body).await?;
+        let form = LoginForm::from_body(request.into_body()).await?;
         Self::login_action(self.store.as_ref(), redirect, &form.user, &form.pass).await
     }
 
-    async fn register(&self, parts: Parts, body: Body) -> Result<Response, Error> {
+    async fn register(&self, request: Request<Body>) -> Result<Response, Error> {
         let response = if let Some(store) = self.store.as_ref() {
-            let form = RegisterForm::from_body(body).await?;
+            let method = request.method().clone();
+            let form = RegisterForm::from_body(request.into_body()).await?;
             if &form.pass != &form.confirm_pass {
                 page::register(Some("Registration failed: passwords don't match."))
             } else {
                 let response = match store.users_exist() {
                     Ok(true) => response::not_found(),
-                    Ok(false) if parts.method == Method::GET => page::register(None),
+                    Ok(false) if method == Method::GET => page::register(None),
                     Ok(false) => Self::register_action(store, &form.user, &form.pass),
                     Err(e) => {
                         error!("{}", e);
@@ -258,9 +264,9 @@ impl RustyShare {
         Ok(response)
     }
 
-    async fn browse_or_archive(&self, parts: Parts, body: Body) -> Result<Response, Error> {
-        let authentication = Self::get_authentication(&self.store, &parts);
-        let pb = decode(parts.uri.path())
+    async fn browse_or_archive(&self, request: Request<Body>) -> Result<Response, Error> {
+        let authentication = Self::get_authentication(&self.store, &request);
+        let pb = decode(request.uri().path())
             .map(|s| {
                 PathBuf::from(s)
                     .components()
@@ -296,7 +302,7 @@ impl RustyShare {
                         info!(
                             "{} {} /browse/{}/{}",
                             name,
-                            parts.method,
+                            request.method(),
                             share_name,
                             path.display()
                         );
@@ -305,7 +311,7 @@ impl RustyShare {
                     Authentication::Error(_) => {
                         info!(
                             "anonymous {} /browse/{}/{}",
-                            parts.method,
+                            request.method(),
                             share_name,
                             path.display()
                         );
@@ -315,18 +321,94 @@ impl RustyShare {
 
                 let r = Self::lookup_share(&self.root, &self.store, &share_name, user_id).await;
                 match r {
-                    Ok(share_path) => {
-                        if parts.method == Method::GET || parts.method == Method::HEAD {
-                            let request = request_from_parts(&parts);
-                            RustyShare::browse(share_name, share_path, path, request, user_name)
+                    Ok(share) => {
+                        if request.method() == Method::GET || request.method() == Method::HEAD {
+                            RustyShare::browse(share_name, share.path, path, request, user_name)
                                 .await
-                        } else if parts.method == Method::POST {
-                            let files = files_from_body(body).await?;
-                            RustyShare::archive(share_path, path, files).await
+                        } else if request.method() == Method::POST {
+                            let files = files_from_body(request.into_body()).await?;
+                            RustyShare::archive(share.path, path, files).await
                         } else {
                             Ok(response::method_not_allowed())
                         }
                     }
+                    Err(res) => Ok(res),
+                }
+            }
+            Err(e) => {
+                error!("{}", e);
+                Ok(response::bad_request())
+            }
+        }
+    }
+
+    async fn upload(&self, request: Request<Body>) -> Result<Response, Error> {
+        let authentication = Self::get_authentication(&self.store, &request);
+        let pb = decode(request.uri().path())
+            .map(|s| {
+                PathBuf::from(s)
+                    .components()
+                    .skip(2)
+                    .map(|c| Path::new(c.as_os_str()))
+                    .collect::<PathBuf>()
+            })
+            .and_then(|pb| {
+                if check_for_path_traversal(&pb) {
+                    Ok(pb)
+                } else {
+                    Err(Error::InvalidArgument)
+                }
+            });
+        match pb {
+            Ok(pb) => {
+                let share_name = pb
+                    .components()
+                    .next()
+                    .unwrap()
+                    .as_os_str()
+                    .to_str()
+                    .unwrap()
+                    .to_string();
+
+                let path = pb
+                    .components()
+                    .skip(1)
+                    .map(|c| Path::new(c.as_os_str()))
+                    .collect::<PathBuf>();
+                let (user_id, _) = match authentication {
+                    Authentication::User(user_id, name) => {
+                        info!(
+                            "{} {} /browse/{}/{}",
+                            name,
+                            request.method(),
+                            share_name,
+                            path.display()
+                        );
+                        (Some(user_id), Some(name))
+                    }
+                    Authentication::Error(_) => {
+                        info!(
+                            "anonymous {} /browse/{}/{}",
+                            request.method(),
+                            share_name,
+                            path.display()
+                        );
+                        (None, None)
+                    }
+                };
+
+                let r = Self::lookup_share(&self.root, &self.store, &share_name, user_id).await;
+                match r {
+                    Ok(share) if share.upload_allowed => {
+                        match RustyShare::do_upload(&share.path.join(&path), request).await {
+                            Ok(_) => Ok(response::no_content()),
+                            Err(e) => {
+                                error!("{}", e);
+                                Ok(response::internal_server_error())
+                            }
+                        }
+                    }
+                    Ok(_) => Ok(response::forbidden()),
                     Err(res) => Ok(res),
                 }
             }
@@ -377,15 +459,15 @@ impl RustyShare {
         }
     }
 
-    async fn browse_shares(&self, parts: Parts) -> Result<Response, Error> {
+    async fn browse_shares(&self, request: Request<Body>) -> Result<Response, Error> {
         let authentication =
-            task::block_in_place(move || Self::get_authentication(&self.store, &parts));
+            task::block_in_place(move || Self::get_authentication(&self.store, &request));
         let response = match authentication {
             Authentication::User(user_id, name) => {
                 info!("{} GET /browse/", name);
                 let r = Self::get_shares(&self.store, Some(user_id)).await;
                 match r {
-                    Ok(shares) => page::shares(&shares, Some(name)),
+                    Ok(shares) => page::shares(shares, Some(name)),
                     Err(response) => response,
                 }
             }
@@ -393,7 +475,7 @@ impl RustyShare {
                 info!("anonymous GET /browse/");
                 let r = Self::get_shares(&self.store, None).await;
                 match r {
-                    Ok(shares) => page::shares(&shares, None),
+                    Ok(shares) => page::shares(shares, None),
                     Err(response) => response,
                 }
             }
@@ -401,15 +483,19 @@ impl RustyShare {
         Ok(response)
     }
 
-    fn get_authentication(store: &Option<SqliteStore>, parts: &Parts) -> Authentication {
-        Authentication::extract(store, &parts.uri, parts.headers.typed_get::<Cookie>())
+    fn get_authentication(store: &Option<SqliteStore>, request: &Request<Body>) -> Authentication {
+        Authentication::extract(
+            store,
+            request.uri(),
+            request.headers().typed_get::<Cookie>(),
+        )
     }
 
     async fn browse(
         share_name: String,
         share: PathBuf,
         path: PathBuf,
-        request: Request<()>,
+        request: Request<Body>,
         user_name: Option<String>,
     ) -> Result<Response, Error> {
         let disk_path = share.join(&path);
@@ -442,6 +528,19 @@ impl RustyShare {
             }
         };
         Ok(response)
+    }
+
+    async fn do_upload(path: &Path, request: Request<Body>) -> Result<(), Error> {
+        let mut file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .await?;
+        let mut body = request.into_body();
+        while let Some(bytes) = body.next().await {
+            file.write_all(bytes?.as_ref()).await?;
+        }
+        Ok(())
     }
 
     async fn archive(
@@ -488,21 +587,19 @@ impl RustyShare {
     }
 
     pub async fn handle_request(self: Arc<Self>, req: Request<Body>) -> Result<Response, Error> {
-        let (parts, body) = req.into_parts();
-        match (&parts.method, parts.uri.path()) {
+        match (req.method(), req.uri().path()) {
             (&Method::GET, "/") => self.index().await,
-            (&Method::GET, "/register") | (&Method::POST, "/register") => {
-                self.register(parts, body).await
-            }
+            (&Method::GET, "/register") | (&Method::POST, "/register") => self.register(req).await,
             (&Method::GET, "/login") => self.login_page().await,
-            (&Method::POST, "/login") => self.login(parts, body).await,
+            (&Method::POST, "/login") => self.login(req).await,
             (&Method::GET, "/favicon.ico") => self.favicon().await,
-            (&Method::GET, "/browse/") => self.browse_shares(parts).await,
+            (&Method::GET, "/browse/") => self.browse_shares(req).await,
             (&Method::GET, path) | (&Method::HEAD, path) | (&Method::POST, path)
                 if path.starts_with("/browse/") =>
             {
-                self.browse_or_archive(parts, body).await
+                self.browse_or_archive(req).await
             }
+            (&Method::PUT, path) if path.starts_with("/browse") => self.upload(req).await,
             _ => Ok(response::not_found()),
         }
     }
@@ -537,8 +634,14 @@ async fn run() -> Result<(), Error> {
                 reset_password(store, &user, &pass)?;
                 return Ok(());
             }
-            Some(Command::CreateShare { ref name, ref path }) => {
-                create_share(store, &name, &path, AccessLevel::Restricted)?;
+            Some(Command::CreateShare { name, path }) => {
+                let share = db::models::NewShare {
+                    name,
+                    path,
+                    access_level: AccessLevel::Restricted,
+                    upload_allowed: false,
+                };
+                store.create_share(share)?;
                 return Ok(());
             }
             None => {}
@@ -579,18 +682,6 @@ fn decode(s: &str) -> Result<OsString, Error> {
     Ok(os_str)
 }
 
-fn request_from_parts(req: &Parts) -> Request<()> {
-    let mut request = Request::builder()
-        .method(req.method.clone())
-        .version(req.version)
-        .uri(req.uri.clone())
-        .body(())
-        .unwrap();
-    request.headers_mut().extend(req.headers.clone());
-    request
-}
-
-// https://www.owasp.org/index.php/Path_Traversal
 fn check_for_path_traversal(path: &Path) -> bool {
     let mut depth = 0u32;
     for c in path.components() {
@@ -696,16 +787,6 @@ pub fn register_user(store: &SqliteStore, name: &str, password: &str) -> Result<
 pub fn reset_password(store: &SqliteStore, name: &str, password: &str) -> Result<(), Error> {
     let hash = scrypt_simple::scrypt_simple(password, 15, 8, 1)?;
     store.update_password_by_name(name, &hash)?;
-    Ok(())
-}
-
-pub fn create_share(
-    store: &SqliteStore,
-    name: &str,
-    path: &str,
-    access_level: AccessLevel,
-) -> Result<(), Error> {
-    store.create_share(name, &path, access_level)?;
     Ok(())
 }
 
