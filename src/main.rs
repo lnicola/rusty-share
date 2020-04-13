@@ -1,7 +1,5 @@
 use archive::Archive;
 use authentication::Authentication;
-use db::models::{AccessLevel, Share};
-use db::SqliteStore;
 use error::Error;
 use futures::stream::StreamExt;
 use headers::{Cookie, HeaderMapExt};
@@ -36,6 +34,9 @@ use tokio::sync::mpsc;
 use tokio::task;
 use url::form_urlencoded;
 use walkdir::WalkDir;
+
+use db::models::{AccessLevel, NewUser, Share, User};
+use db::SqliteStore;
 
 mod archive;
 mod authentication;
@@ -250,7 +251,7 @@ impl RustyShare {
                 let response = match store.users_exist() {
                     Ok(true) => response::not_found(),
                     Ok(false) if method == Method::GET => page::register(None),
-                    Ok(false) => Self::register_action(store, &form.user, &form.pass),
+                    Ok(false) => Self::register_action(store, form.user, &form.pass),
                     Err(e) => {
                         error!("{}", e);
                         response::internal_server_error()
@@ -451,9 +452,8 @@ impl RustyShare {
         Ok(response)
     }
 
-    fn register_action(store: &SqliteStore, user: &str, pass: &str) -> Response {
-        let user_id = register_user(store, user, pass);
-        match user_id {
+    fn register_action(store: &SqliteStore, user: String, pass: &str) -> Response {
+        match register_user(store, user, pass) {
             Ok(_) => response::register_ok("/login"),
             Err(_) => page::register(Some("Registration failed.")),
         }
@@ -626,8 +626,8 @@ async fn run() -> Result<(), Error> {
 
     if let Some(store) = &store {
         match options.command {
-            Some(Command::Register { ref user, ref pass }) => {
-                register_user(store, &user, &pass)?;
+            Some(Command::Register { user, pass }) => {
+                register_user(store, user, &pass)?;
                 return Ok(());
             }
             Some(Command::ResetPassword { ref user, ref pass }) => {
@@ -778,10 +778,14 @@ fn render_index(
     }
 }
 
-pub fn register_user(store: &SqliteStore, name: &str, password: &str) -> Result<i32, Error> {
+pub fn register_user(store: &SqliteStore, name: String, password: &str) -> Result<User, Error> {
     let hash = scrypt_simple::scrypt_simple(password, 15, 8, 1)?;
-    let user_id = store.insert_user(name, &hash)?;
-    Ok(user_id)
+    let user = NewUser {
+        name,
+        password: hash,
+    };
+    let user = store.create_user(user)?;
+    Ok(user)
 }
 
 pub fn reset_password(store: &SqliteStore, name: &str, password: &str) -> Result<(), Error> {

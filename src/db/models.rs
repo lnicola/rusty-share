@@ -4,6 +4,7 @@ use rusqlite::{Error, Row, ToSql};
 use std::ffi::OsString;
 use std::{convert::TryFrom, path::PathBuf};
 
+#[derive(PartialEq, Eq, Debug)]
 pub struct User {
     pub id: i32,
     pub name: String,
