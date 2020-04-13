@@ -250,8 +250,13 @@ impl RustyShare {
             } else {
                 let response = match store.users_exist() {
                     Ok(true) => response::not_found(),
-                    Ok(false) if method == Method::GET => page::register(None),
-                    Ok(false) => Self::register_action(store, form.user, &form.pass),
+                    Ok(false) => {
+                        if method == Method::GET {
+                            page::register(None)
+                        } else {
+                            Self::register_action(store, form.user, &form.pass)
+                        }
+                    }
                     Err(e) => {
                         error!("{}", e);
                         response::internal_server_error()
