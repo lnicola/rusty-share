@@ -201,6 +201,10 @@ mod tests {
     use crate::db::models::{AccessLevel, NewShare, NewUser};
 
     fn get_store() -> DbResult<SqliteStore> {
+        unsafe {
+            rusqlite::bypass_sqlite_version_check();
+        }
+
         let store = SqliteStore::new(":memory:")?;
         store.initialize_database()?;
         Ok(store)

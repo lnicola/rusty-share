@@ -716,6 +716,9 @@ fn check_for_path_traversal(path: &Path) -> bool {
 }
 
 fn main() {
+    unsafe {
+        rusqlite::bypass_sqlite_version_check();
+    }
     let mut rt = tokio::runtime::Builder::new()
         .threaded_scheduler()
         .enable_all()
