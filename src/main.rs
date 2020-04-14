@@ -22,6 +22,7 @@ use share_entry::ShareEntry;
 use std::borrow::Cow;
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry};
+use std::io::Write;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Component, Path, PathBuf};
 use std::str;
@@ -29,7 +30,6 @@ use std::sync::Arc;
 use std::time::Instant;
 use structopt::StructOpt;
 use tar::Builder;
-use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tokio::task;
 use url::form_urlencoded;
@@ -538,14 +538,16 @@ impl RustyShare {
     }
 
     async fn do_upload(path: &Path, request: Request<Body>) -> Result<(), Error> {
-        let mut file = tokio::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)
-            .await?;
+        let mut file = tokio::task::block_in_place(|| {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+        })?;
         let mut body = request.into_body();
         while let Some(bytes) = body.next().await {
-            file.write_all(bytes?.as_ref()).await?;
+            let bytes = bytes?;
+            tokio::task::block_in_place(|| file.write_all(bytes.as_ref()))?;
         }
         Ok(())
     }
