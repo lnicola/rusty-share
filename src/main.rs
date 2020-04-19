@@ -153,8 +153,8 @@ async fn files_from_body(body: Body) -> Result<Vec<PathBuf>, Error> {
     let files = form_urlencoded::parse(bytes.as_ref())
         .filter_map(|p| {
             if p.0 == "s" {
-                let percent_decoded = Cow::from(percent_encoding::percent_decode_str(p.1.as_ref()));
-                PathBuf::from_bytes(percent_decoded.into_owned())
+                let percent_decoded = Cow::from(percent_encoding::percent_decode_str(&p.1));
+                PathBuf::from_bytes(percent_decoded)
                     .map_err(|e| error!("cannot decode {}: {}", p.1, e))
                     .ok()
             } else {
