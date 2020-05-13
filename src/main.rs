@@ -154,7 +154,7 @@ async fn files_from_body(body: Body) -> Result<Vec<PathBuf>, Error> {
         .filter_map(|p| {
             if p.0 == "s" {
                 let percent_decoded = Cow::from(percent_encoding::percent_decode_str(&p.1));
-                PathBuf::from_bytes(percent_decoded)
+                PathBuf::from_cow(percent_decoded)
                     .map_err(|e| error!("cannot decode {}: {}", p.1, e))
                     .ok()
             } else {
@@ -686,7 +686,7 @@ async fn run() -> Result<(), Error> {
 
 fn decode(s: &str) -> Result<PathBuf, Error> {
     let percent_decoded = Cow::from(percent_encoding::percent_decode_str(s));
-    let os_str = PathBuf::from_bytes(percent_decoded).map_err(|_e| Error::InvalidArgument)?;
+    let os_str = PathBuf::from_cow(percent_decoded).map_err(|_e| Error::InvalidArgument)?;
     Ok(os_str)
 }
 
