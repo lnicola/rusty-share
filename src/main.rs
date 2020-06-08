@@ -171,25 +171,22 @@ impl RustyShare {
         store: &Option<SqliteStore>,
         name: &str,
         user_id: Option<i32>,
-    ) -> Result<Share, Response> {
+    ) -> Result<Option<Share>, Response> {
         task::block_in_place(move || {
             if let Some(store) = store {
-                let path = store
-                    .lookup_share(&name, user_id)
-                    .map_err(|e| {
-                        error!("{}", e);
-                        response::internal_server_error()
-                    })?
-                    .ok_or_else(response::not_found)?;
+                let path = store.lookup_share(&name, user_id).map_err(|e| {
+                    error!("{}", e);
+                    response::internal_server_error()
+                })?;
                 Ok(path)
             } else if name == "public" {
-                Ok(Share {
+                Ok(Some(Share {
                     id: 0,
                     name: String::from("public"),
                     path: root.to_path_buf(),
                     access_level: AccessLevel::Public,
                     upload_allowed: false,
-                })
+                }))
             } else {
                 Err(response::not_found())
             }
@@ -326,7 +323,7 @@ impl RustyShare {
 
                 let r = Self::lookup_share(&self.root, &self.store, &share_name, user_id).await;
                 match r {
-                    Ok(share) => {
+                    Ok(Some(share)) => {
                         if request.method() == Method::GET || request.method() == Method::HEAD {
                             RustyShare::browse(share, path, request, user_name).await
                         } else if request.method() == Method::POST {
@@ -336,6 +333,7 @@ impl RustyShare {
                             Ok(response::method_not_allowed())
                         }
                     }
+                    Ok(None) => Ok(response::login_redirect(request.uri(), false)),
                     Err(res) => Ok(res),
                 }
             }
@@ -402,7 +400,7 @@ impl RustyShare {
 
                 let r = Self::lookup_share(&self.root, &self.store, &share_name, user_id).await;
                 match r {
-                    Ok(share) if share.upload_allowed => {
+                    Ok(Some(share)) if share.upload_allowed => {
                         match RustyShare::do_upload(&share.path.join(&path), request).await {
                             Ok(_) => Ok(response::no_content()),
                             Err(e) => {
@@ -411,6 +409,7 @@ impl RustyShare {
                             }
                         }
                     }
+                    Ok(None) => Ok(response::login_redirect(request.uri(), false)),
                     Ok(_) => Ok(response::forbidden()),
                     Err(res) => Ok(res),
                 }
