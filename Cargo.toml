@@ -17,7 +17,7 @@ hex = "0.4"
 horrorshow = { version = "0.8", default-features = false, features = ["alloc"] }
 http = "0.2"
 http-serve = "0.2"
-hyper = { version = "0.13", features = ["stream"] }
+hyper = { version = "=0.13.5", features = ["stream"] }
 log = "0.4"
 mime_guess = "2.0"
 os_str_bytes = "2.3"
