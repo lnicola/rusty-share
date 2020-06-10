@@ -1201,6 +1201,7 @@ dependencies = [
  "r2d2",
  "r2d2_sqlite",
  "rand",
+ "rand_core",
  "rayon",
  "rusqlite",
  "scrypt",
@@ -1248,9 +1249,13 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "83ecb7ed8e2266bd539feb932c52b9e7ce01d14384166ac50fecb173f762f1aa"
 dependencies = [
+ "base64",
  "hmac",
  "pbkdf2",
+ "rand",
+ "rand_core",
  "sha2",
+ "subtle",
 ]
 
 [[package]]

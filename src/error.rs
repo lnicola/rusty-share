@@ -37,6 +37,9 @@ pub enum Error {
     R2d2 {
         cause: r2d2::Error,
     },
+    Rand {
+        cause: rand_core::Error,
+    },
 }
 
 impl Error {
@@ -90,6 +93,12 @@ impl From<r2d2::Error> for Error {
     }
 }
 
+impl From<rand_core::Error> for Error {
+    fn from(cause: rand_core::Error) -> Self {
+        Error::Rand { cause }
+    }
+}
+
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
@@ -111,6 +120,7 @@ impl Display for Error {
             Error::Rusqlite { cause } => cause.fmt(f),
             Error::Hyper { cause } => cause.fmt(f),
             Error::R2d2 { cause } => cause.fmt(f),
+            Error::Rand { cause } => cause.fmt(f),
             Error::StreamCancelled => write!(f, "the archiving stream was cancelled unexpectedly"),
             Error::InvalidArgument => write!(f, "invalid argument"),
         }

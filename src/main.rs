@@ -18,6 +18,7 @@ use pretty_env_logger;
 use rand::{self, Rng};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
+use scrypt::ScryptParams;
 use share_entry::ShareEntry;
 use std::borrow::Cow;
 use std::ffi::OsStr;
@@ -46,7 +47,6 @@ mod options;
 mod page;
 mod pipe;
 mod response;
-mod scrypt_simple;
 mod share_entry;
 
 type Response = http::Response<Body>;
@@ -796,7 +796,7 @@ fn render_index(
 }
 
 pub fn register_user(store: &SqliteStore, name: String, password: &str) -> Result<User, Error> {
-    let hash = scrypt_simple::scrypt_simple(password, 15, 8, 1)?;
+    let hash = scrypt::scrypt_simple(password, &ScryptParams::recommended())?;
     let user = NewUser {
         name,
         password: hash,
@@ -806,7 +806,7 @@ pub fn register_user(store: &SqliteStore, name: String, password: &str) -> Resul
 }
 
 pub fn reset_password(store: &SqliteStore, name: &str, password: &str) -> Result<(), Error> {
-    let hash = scrypt_simple::scrypt_simple(password, 15, 8, 1)?;
+    let hash = scrypt::scrypt_simple(password, &ScryptParams::recommended())?;
     store.update_password_by_name(name, &hash)?;
     Ok(())
 }
@@ -820,7 +820,7 @@ pub async fn authenticate(
         let user = store
             .find_user(name)?
             .and_then(|user| {
-                scrypt_simple::scrypt_check(password, &user.password)
+                scrypt::scrypt_check(password, &user.password)
                     .map(|_| user)
                     .map_err(|e| error!("Password verification failed for user {}: {}", name, e))
                     .ok()
