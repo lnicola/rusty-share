@@ -7,6 +7,7 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, OptionalExtension, NO_PARAMS};
 
 use std::convert::TryFrom;
+use std::path::Path;
 
 type DbResult<T> = Result<T, Error>;
 
@@ -16,7 +17,7 @@ pub struct SqliteStore {
 }
 
 impl SqliteStore {
-    pub fn new(url: &str) -> DbResult<Self> {
+    pub fn new(url: &Path) -> DbResult<Self> {
         let store = Self {
             pool: Pool::new(SqliteConnectionManager::file(url))?,
         };

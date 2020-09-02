@@ -1,25 +1,18 @@
-use archive::Archive;
-use authentication::Authentication;
-use error::Error;
 use futures::stream::StreamExt;
 use headers::{Cookie, HeaderMapExt};
 use hex;
 use http::header::CONTENT_TYPE;
 use http::{HeaderMap, HeaderValue, Method, Request};
 use http_serve::{self, ChunkedReadFile};
-use hyper::{body, service};
-use hyper::{Body, Server};
+use hyper::{body, service, Body, Server};
 use log::{error, info};
 use mime_guess;
-use options::{Command, Options};
 use os_str_bytes::{OsStrBytes, OsStringBytes};
-use pipe::Pipe;
 use pretty_env_logger;
 use rand::{self, Rng};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
 use scrypt::ScryptParams;
-use share_entry::ShareEntry;
 use std::borrow::Cow;
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry};
@@ -29,15 +22,20 @@ use std::path::{Component, Path, PathBuf};
 use std::str;
 use std::sync::Arc;
 use std::time::Instant;
-use structopt::StructOpt;
 use tar::Builder;
 use tokio::sync::mpsc;
 use tokio::task;
 use url::form_urlencoded;
 use walkdir::WalkDir;
 
+use archive::Archive;
+use authentication::Authentication;
 use db::models::{AccessLevel, NewUser, Share, User};
 use db::SqliteStore;
+use error::Error;
+use options::{Args, Command};
+use pipe::Pipe;
+use share_entry::ShareEntry;
 
 mod archive;
 mod authentication;
@@ -612,75 +610,91 @@ impl RustyShare {
     }
 }
 
+fn get_store(path: &Path) -> SqliteStore {
+    let should_initialize = !Path::new(&path).exists();
+    let store = SqliteStore::new(path).unwrap();
+
+    if should_initialize {
+        info!("Initializing database");
+        store
+            .initialize_database()
+            .expect("unable to create database");
+    }
+
+    store
+}
+
 async fn run() -> Result<(), Error> {
+    let args = Args::parse().unwrap();
+
     pretty_env_logger::init();
 
-    let options = Options::from_args();
-
-    let store: Option<SqliteStore> = options.db.as_ref().map(|db| {
-        let should_initialize = !Path::new(&db).exists();
-        let store = SqliteStore::new(db).unwrap();
-
-        if should_initialize {
-            info!("Initializing database");
-            store
-                .initialize_database()
-                .expect("unable to create database");
+    match args.command {
+        Command::Register {
+            user,
+            pass,
+            db_path,
+        } => {
+            let store = get_store(&db_path);
+            register_user(&store, user, &pass)?;
+            return Ok(());
         }
-
-        store
-    });
-
-    if let Some(store) = &store {
-        match options.command {
-            Some(Command::Register { user, pass }) => {
-                register_user(store, user, &pass)?;
-                return Ok(());
-            }
-            Some(Command::ResetPassword { ref user, ref pass }) => {
-                reset_password(store, &user, &pass)?;
-                return Ok(());
-            }
-            Some(Command::CreateShare { name, path }) => {
-                let share = db::models::NewShare {
-                    name,
-                    path,
-                    access_level: AccessLevel::Restricted,
-                    upload_allowed: false,
-                };
-                store.create_share(share)?;
-                return Ok(());
-            }
-            None => {}
+        Command::ResetPassword {
+            user,
+            pass,
+            db_path,
+        } => {
+            let store = get_store(&db_path);
+            reset_password(&store, &user, &pass)?;
+            return Ok(());
         }
-    };
+        Command::CreateShare {
+            name,
+            path,
+            db_path,
+        } => {
+            let store = get_store(&db_path);
+            let share = db::models::NewShare {
+                name,
+                path,
+                access_level: AccessLevel::Restricted,
+                upload_allowed: false,
+            };
+            store.create_share(share)?;
+            return Ok(());
+        }
+        Command::Start {
+            root,
+            db_path,
+            address,
+            port,
+        } => {
+            let addr = SocketAddr::new(
+                address
+                    .parse::<IpAddr>()
+                    .map_err(|e| Error::from_addr_parse(e, address.clone()))?,
+                port,
+            );
+            println!("Listening on http://{}", addr);
 
-    let addr = SocketAddr::new(
-        options
-            .address
-            .parse::<IpAddr>()
-            .map_err(|e| Error::from_addr_parse(e, options.address.clone()))?,
-        options.port,
-    );
-    println!("Listening on http://{}", addr);
+            let store = db_path.as_ref().map(|db_path| get_store(&db_path));
+            let rusty_share = RustyShare { root: root, store };
+            let rusty_share = Arc::new(rusty_share);
 
-    let rusty_share = RustyShare {
-        root: options.root,
-        store,
-    };
-    let rusty_share = Arc::new(rusty_share);
+            let new_svc = service::make_service_fn(move |_| {
+                let rusty_share = Arc::clone(&rusty_share);
+                futures::future::ok::<_, Error>(service::service_fn(move |req| {
+                    RustyShare::handle_request(Arc::clone(&rusty_share), req)
+                }))
+            });
 
-    let new_svc = service::make_service_fn(move |_| {
-        let rusty_share = Arc::clone(&rusty_share);
-        futures::future::ok::<_, Error>(service::service_fn(move |req| {
-            RustyShare::handle_request(Arc::clone(&rusty_share), req)
-        }))
-    });
+            let listener = std::net::TcpListener::bind(&addr)?;
 
-    let listener = std::net::TcpListener::bind(&addr)?;
-
-    let server = Server::from_tcp(listener)?.tcp_nodelay(true).serve(new_svc);
-    Ok(server.await?)
+            let server = Server::from_tcp(listener)?.tcp_nodelay(true).serve(new_svc);
+            return Ok(server.await?);
+        }
+        Command::Help => return Ok(()),
+    }
 }
 
 fn decode(s: &str) -> Result<PathBuf, Error> {
