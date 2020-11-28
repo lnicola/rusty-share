@@ -89,10 +89,10 @@ impl Args {
                         command: Command::Help,
                     });
                 }
-                let user = matches.free_from_str()?.unwrap();
-                let pass = matches.free_from_str()?.unwrap();
                 let db_path = matches
                     .value_from_os_str::<_, _, Infallible>("--db", |s| Ok(PathBuf::from(s)))?;
+                let user = matches.free_from_str()?.unwrap();
+                let pass = matches.free_from_str()?.unwrap();
                 matches.finish()?;
                 return Ok(Args {
                     command: Command::Register {
@@ -110,10 +110,10 @@ impl Args {
                         command: Command::Help,
                     });
                 }
-                let user = matches.free_from_str()?.unwrap();
-                let pass = matches.free_from_str()?.unwrap();
                 let db_path = matches
                     .value_from_os_str::<_, _, Infallible>("--db", |s| Ok(PathBuf::from(s)))?;
+                let user = matches.free_from_str()?.unwrap();
+                let pass = matches.free_from_str()?.unwrap();
                 matches.finish()?;
                 return Ok(Args {
                     command: Command::ResetPassword {
@@ -131,12 +131,12 @@ impl Args {
                         command: Command::Help,
                     });
                 }
+                let db_path = matches
+                    .value_from_os_str::<_, _, Infallible>("--db", |s| Ok(PathBuf::from(s)))?;
                 let name = matches.free_from_str()?.unwrap();
                 let path = matches
                     .free_from_os_str::<_, Infallible>(|s| Ok(PathBuf::from(s)))?
                     .unwrap();
-                let db_path = matches
-                    .value_from_os_str::<_, _, Infallible>("--db", |s| Ok(PathBuf::from(s)))?;
                 matches.finish()?;
                 return Ok(Args {
                     command: Command::CreateShare {
@@ -219,7 +219,7 @@ fn print_help_reset_password() {
 Resets the password of a user
 
 USAGE:
-    rusty-share create-share [OPTIONS] <user> <pass>
+    rusty-share reset-password [OPTIONS] <user> <pass>
 
 OPTIONS:
         --db <db>             The database path
