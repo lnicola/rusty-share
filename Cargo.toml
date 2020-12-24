@@ -41,6 +41,3 @@ default = ["bundled-windows"]
 
 bundled-sqlite = ["rusqlite/bundled"]
 bundled-windows = ["rusqlite/bundled-windows"]
-
-[profile.release.build-override]
-opt-level = 0
