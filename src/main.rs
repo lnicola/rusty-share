@@ -23,6 +23,7 @@ use std::str;
 use std::sync::Arc;
 use std::time::Instant;
 use tar::Builder;
+use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 use tokio::task;
 use url::form_urlencoded;
@@ -55,7 +56,7 @@ struct RustyShare {
 }
 
 fn get_archive(archive: Archive) -> Body {
-    let (tx, rx) = mpsc::channel(1);
+    let (tx, mut rx) = mpsc::channel(1);
     let pipe = Pipe::new(tx);
     let mut builder = Builder::new(pipe);
     let f = task::spawn_blocking(move || {
@@ -68,8 +69,12 @@ fn get_archive(archive: Archive) -> Body {
     });
     tokio::spawn(f);
 
-    let rx = rx.map(|chunk| Ok::<_, Error>(chunk));
-    Body::wrap_stream(rx)
+    let stream = async_stream::stream! {
+        while let Some(chunk) = rx.recv().await {
+            yield Ok::<_, Error>(chunk);
+        }
+    };
+    Body::wrap_stream(stream)
 }
 
 fn get_archive_name(path_: &Path, files: &[PathBuf], single_dir: bool) -> String {
@@ -627,8 +632,6 @@ fn get_store(path: &Path) -> SqliteStore {
 async fn run() -> Result<(), Error> {
     let args = Args::parse().unwrap();
 
-    pretty_env_logger::init();
-
     match args.command {
         Command::Register {
             user,
@@ -729,14 +732,11 @@ fn check_for_path_traversal(path: &Path) -> bool {
 }
 
 fn main() {
+    pretty_env_logger::init();
     unsafe {
         rusqlite::bypass_sqlite_version_check();
     }
-    let mut rt = tokio::runtime::Builder::new()
-        .threaded_scheduler()
-        .enable_all()
-        .build()
-        .unwrap();
+    let rt = Runtime::new().expect("cannot start runtime");
     rt.block_on(async move { run().await }).unwrap();
 }
 
