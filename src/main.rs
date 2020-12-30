@@ -1,14 +1,11 @@
 use futures::stream::StreamExt;
 use headers::{Cookie, HeaderMapExt};
-use hex;
 use http::header::CONTENT_TYPE;
 use http::{HeaderMap, HeaderValue, Method, Request};
 use http_serve::{self, ChunkedReadFile};
 use hyper::{body, service, Body, Server};
 use log::{error, info};
-use mime_guess;
 use os_str_bytes::{OsStrBytes, OsStringBytes};
-use pretty_env_logger;
 use rand::{self, Rng};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
@@ -245,10 +242,10 @@ impl RustyShare {
         let response = if let Some(store) = self.store.as_ref() {
             let method = request.method().clone();
             let form = RegisterForm::from_body(request.into_body()).await?;
-            if &form.pass != &form.confirm_pass {
+            if form.pass != form.confirm_pass {
                 page::register(Some("Registration failed: passwords don't match."))
             } else {
-                let response = match store.users_exist() {
+                match store.users_exist() {
                     Ok(true) => response::not_found(),
                     Ok(false) => {
                         if method == Method::GET {
@@ -261,8 +258,7 @@ impl RustyShare {
                         error!("{}", e);
                         response::internal_server_error()
                     }
-                };
-                response
+                }
             }
         } else {
             response::not_found()
@@ -681,7 +677,7 @@ async fn run() -> Result<(), Error> {
             println!("Listening on http://{}", addr);
 
             let store = db_path.as_ref().map(|db_path| get_store(&db_path));
-            let rusty_share = RustyShare { root: root, store };
+            let rusty_share = RustyShare { root, store };
             let rusty_share = Arc::new(rusty_share);
 
             let new_svc = service::make_service_fn(move |_| {

@@ -3,7 +3,6 @@ use std::fmt::{self, Display, Formatter};
 use std::io;
 use std::net::AddrParseError;
 use std::path::{PathBuf, StripPrefixError};
-use walkdir;
 
 #[derive(Debug)]
 pub enum Error {

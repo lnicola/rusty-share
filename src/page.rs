@@ -204,10 +204,7 @@ pub fn register(message: Option<&str>) -> Response<Body> {
         }
     };
     match page.into_string() {
-        Ok(page) => {
-            let response = response::page(page);
-            response
-        }
+        Ok(page) => response::page(page),
         Err(e) => {
             error!("{}", e);
             response::internal_server_error()

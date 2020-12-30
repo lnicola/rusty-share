@@ -72,14 +72,14 @@ impl Args {
                     .opt_value_from_str(["-p", "--port"])?
                     .unwrap_or(8080);
                 matches.finish()?;
-                return Ok(Args {
+                Ok(Args {
                     command: Command::Start {
                         root,
                         db_path,
                         address,
                         port,
                     },
-                });
+                })
             }
             "register" => {
                 if matches.contains(["-h", "--help"]) {
@@ -94,13 +94,13 @@ impl Args {
                 let user = matches.free_from_str()?.unwrap();
                 let pass = matches.free_from_str()?.unwrap();
                 matches.finish()?;
-                return Ok(Args {
+                Ok(Args {
                     command: Command::Register {
                         user,
                         pass,
                         db_path,
                     },
-                });
+                })
             }
             "reset-password" => {
                 if matches.contains(["-h", "--help"]) {
@@ -115,13 +115,13 @@ impl Args {
                 let user = matches.free_from_str()?.unwrap();
                 let pass = matches.free_from_str()?.unwrap();
                 matches.finish()?;
-                return Ok(Args {
+                Ok(Args {
                     command: Command::ResetPassword {
                         user,
                         pass,
                         db_path,
                     },
-                });
+                })
             }
             "create-share" => {
                 if matches.contains(["-h", "--help"]) {
@@ -138,19 +138,19 @@ impl Args {
                     .free_from_os_str::<_, Infallible>(|s| Ok(PathBuf::from(s)))?
                     .unwrap();
                 matches.finish()?;
-                return Ok(Args {
+                Ok(Args {
                     command: Command::CreateShare {
                         name,
                         path,
                         db_path,
                     },
-                });
+                })
             }
             _ => {
                 print_help();
-                return Ok(Args {
+                Ok(Args {
                     command: Command::Help,
-                });
+                })
             }
         }
     }
