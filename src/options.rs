@@ -40,7 +40,10 @@ impl Args {
             Some(cmd) => cmd,
             None => {
                 if matches.contains(["-h", "--help"]) {
-                    matches.finish()?;
+                    let remaining = matches.finish();
+                    if !remaining.is_empty() {
+                        eprintln!("Unused arguments: {:?}", remaining);
+                    }
                     print_help();
                     return Ok(Args {
                         command: Command::Help,
@@ -52,7 +55,10 @@ impl Args {
         match cmd.as_str() {
             "start" => {
                 if matches.contains(["-h", "--help"]) {
-                    matches.finish()?;
+                    let remaining = matches.finish();
+                    if !remaining.is_empty() {
+                        eprintln!("Unused arguments: {:?}", remaining);
+                    }
                     print_help_start();
                     return Ok(Args {
                         command: Command::Help,
@@ -71,7 +77,10 @@ impl Args {
                 let port = matches
                     .opt_value_from_str(["-p", "--port"])?
                     .unwrap_or(8080);
-                matches.finish()?;
+                let remaining = matches.finish();
+                if !remaining.is_empty() {
+                    eprintln!("Unused arguments: {:?}", remaining);
+                }
                 Ok(Args {
                     command: Command::Start {
                         root,
@@ -83,7 +92,10 @@ impl Args {
             }
             "register" => {
                 if matches.contains(["-h", "--help"]) {
-                    matches.finish()?;
+                    let remaining = matches.finish();
+                    if !remaining.is_empty() {
+                        eprintln!("Unused arguments: {:?}", remaining);
+                    }
                     print_help_register();
                     return Ok(Args {
                         command: Command::Help,
@@ -91,9 +103,12 @@ impl Args {
                 }
                 let db_path = matches
                     .value_from_os_str::<_, _, Infallible>("--db", |s| Ok(PathBuf::from(s)))?;
-                let user = matches.free_from_str()?.unwrap();
-                let pass = matches.free_from_str()?.unwrap();
-                matches.finish()?;
+                let user = matches.free_from_str()?;
+                let pass = matches.free_from_str()?;
+                let remaining = matches.finish();
+                if !remaining.is_empty() {
+                    eprintln!("Unused arguments: {:?}", remaining);
+                }
                 Ok(Args {
                     command: Command::Register {
                         user,
@@ -104,7 +119,10 @@ impl Args {
             }
             "reset-password" => {
                 if matches.contains(["-h", "--help"]) {
-                    matches.finish()?;
+                    let remaining = matches.finish();
+                    if !remaining.is_empty() {
+                        eprintln!("Unused arguments: {:?}", remaining);
+                    }
                     print_help_reset_password();
                     return Ok(Args {
                         command: Command::Help,
@@ -112,9 +130,12 @@ impl Args {
                 }
                 let db_path = matches
                     .value_from_os_str::<_, _, Infallible>("--db", |s| Ok(PathBuf::from(s)))?;
-                let user = matches.free_from_str()?.unwrap();
-                let pass = matches.free_from_str()?.unwrap();
-                matches.finish()?;
+                let user = matches.free_from_str()?;
+                let pass = matches.free_from_str()?;
+                let remaining = matches.finish();
+                if !remaining.is_empty() {
+                    eprintln!("Unused arguments: {:?}", remaining);
+                }
                 Ok(Args {
                     command: Command::ResetPassword {
                         user,
@@ -125,7 +146,10 @@ impl Args {
             }
             "create-share" => {
                 if matches.contains(["-h", "--help"]) {
-                    matches.finish()?;
+                    let remaining = matches.finish();
+                    if !remaining.is_empty() {
+                        eprintln!("Unused arguments: {:?}", remaining);
+                    }
                     print_help_create_share();
                     return Ok(Args {
                         command: Command::Help,
@@ -133,11 +157,12 @@ impl Args {
                 }
                 let db_path = matches
                     .value_from_os_str::<_, _, Infallible>("--db", |s| Ok(PathBuf::from(s)))?;
-                let name = matches.free_from_str()?.unwrap();
-                let path = matches
-                    .free_from_os_str::<_, Infallible>(|s| Ok(PathBuf::from(s)))?
-                    .unwrap();
-                matches.finish()?;
+                let name = matches.free_from_str()?;
+                let path = matches.free_from_os_str::<_, Infallible>(|s| Ok(PathBuf::from(s)))?;
+                let remaining = matches.finish();
+                if !remaining.is_empty() {
+                    eprintln!("Unused arguments: {:?}", remaining);
+                }
                 Ok(Args {
                     command: Command::CreateShare {
                         name,
