@@ -1,5 +1,4 @@
 use bytes::{Bytes, BytesMut};
-use futures::executor;
 use std::io::{Error, ErrorKind, Result, Write};
 use tokio::sync::mpsc::Sender;
 
@@ -20,7 +19,7 @@ impl Pipe {
 impl Write for Pipe {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
         self.bytes.extend_from_slice(buf);
-        match executor::block_on(self.dest.send(self.bytes.split().freeze())) {
+        match futures_executor::block_on(self.dest.send(self.bytes.split().freeze())) {
             Ok(_) => Ok(buf.len()),
             Err(e) => Err(Error::new(ErrorKind::UnexpectedEof, e)),
         }

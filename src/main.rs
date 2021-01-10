@@ -1,4 +1,4 @@
-use futures::stream::StreamExt;
+use futures_util::stream::StreamExt;
 use headers::{Cookie, HeaderMapExt};
 use http::header::CONTENT_TYPE;
 use http::{HeaderMap, HeaderValue, Method, Request};
@@ -682,7 +682,7 @@ async fn run() -> Result<(), Error> {
 
             let new_svc = service::make_service_fn(move |_| {
                 let rusty_share = Arc::clone(&rusty_share);
-                futures::future::ok::<_, Error>(service::service_fn(move |req| {
+                futures_util::future::ok::<_, Error>(service::service_fn(move |req| {
                     RustyShare::handle_request(Arc::clone(&rusty_share), req)
                 }))
             });
