@@ -4,6 +4,8 @@ use std::io;
 use std::net::AddrParseError;
 use std::path::{PathBuf, StripPrefixError};
 
+use password_hash::{HashError, HasherError};
+
 #[derive(Debug)]
 pub enum Error {
     InvalidFilename {
@@ -38,6 +40,12 @@ pub enum Error {
     },
     Rand {
         cause: rand_core::Error,
+    },
+    Hash {
+        cause: HashError,
+    },
+    Hasher {
+        cause: HasherError,
     },
 }
 
@@ -98,6 +106,18 @@ impl From<rand_core::Error> for Error {
     }
 }
 
+impl From<HashError> for Error {
+    fn from(cause: HashError) -> Self {
+        Self::Hash { cause }
+    }
+}
+
+impl From<HasherError> for Error {
+    fn from(cause: HasherError) -> Self {
+        Self::Hasher { cause }
+    }
+}
+
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
@@ -120,6 +140,8 @@ impl Display for Error {
             Error::Hyper { cause } => cause.fmt(f),
             Error::R2d2 { cause } => cause.fmt(f),
             Error::Rand { cause } => cause.fmt(f),
+            Error::Hash { cause } => cause.fmt(f),
+            Error::Hasher { cause } => cause.fmt(f),
             Error::StreamCancelled => write!(f, "the archiving stream was cancelled unexpectedly"),
             Error::InvalidArgument => write!(f, "invalid argument"),
         }

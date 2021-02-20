@@ -6,10 +6,11 @@ use http_serve::{self, ChunkedReadFile};
 use hyper::{body, service, Body, Server};
 use log::{error, info};
 use os_str_bytes::{OsStrBytes, OsStringBytes};
-use rand::{self, Rng};
+use password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use rand_core::{OsRng, RngCore};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
-use scrypt::ScryptParams;
+use scrypt::Scrypt;
 use std::borrow::Cow;
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry};
@@ -806,18 +807,20 @@ fn render_index(
 }
 
 pub fn register_user(store: &SqliteStore, name: String, password: &str) -> Result<User, Error> {
-    let hash = scrypt::scrypt_simple(password, &ScryptParams::recommended())?;
+    let salt = SaltString::generate(OsRng);
+    let hash = Scrypt.hash_password_simple(password.as_bytes(), salt.as_str())?;
     let user = NewUser {
         name,
-        password: hash,
+        password: hash.to_string(),
     };
     let user = store.create_user(user)?;
     Ok(user)
 }
 
 pub fn reset_password(store: &SqliteStore, name: &str, password: &str) -> Result<(), Error> {
-    let hash = scrypt::scrypt_simple(password, &ScryptParams::recommended())?;
-    store.update_password_by_name(name, &hash)?;
+    let salt = SaltString::generate(OsRng);
+    let hash = Scrypt.hash_password_simple(password.as_bytes(), salt.as_str())?;
+    store.update_password_by_name(name, &hash.to_string())?;
     Ok(())
 }
 
@@ -830,18 +833,29 @@ pub async fn authenticate(
         let user = store
             .find_user(name)?
             .and_then(|user| {
-                scrypt::scrypt_check(password, &user.password)
-                    .map(|_| user)
-                    .map_err(|e| error!("Password verification failed for user {}: {}", name, e))
+                PasswordHash::new(&user.password.clone())
                     .ok()
+                    .and_then(|hash| {
+                        Scrypt
+                            .verify_password(password.as_bytes(), &hash)
+                            .map(|_| user)
+                            .map_err(|e| {
+                                error!("Password verification failed for user {}: {}", name, e)
+                            })
+                            .ok()
+                    })
             })
-            .map(|user| {
-                let session_id = rand::thread_rng().gen::<[u8; 16]>();
+            .and_then(|user| {
+                let mut session_id = [0; 16];
+                if let Err(e) = OsRng.try_fill_bytes(&mut session_id) {
+                    error!("Error generating session id for user id {}: {}", user.id, e);
+                    return None;
+                }
                 if let Err(e) = store.create_session(&session_id, user.id) {
                     error!("Error saving session for user id {}: {}", user.id, e);
                 }
 
-                session_id
+                Some(session_id)
             });
 
         Ok(user)
