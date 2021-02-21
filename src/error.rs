@@ -4,7 +4,7 @@ use std::io;
 use std::net::AddrParseError;
 use std::path::{PathBuf, StripPrefixError};
 
-use password_hash::{HashError, HasherError};
+use scrypt::password_hash::{HashError, HasherError};
 
 #[derive(Debug)]
 pub enum Error {
