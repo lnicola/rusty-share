@@ -108,7 +108,7 @@ impl LoginForm {
 
         let mut user = String::new();
         let mut pass = String::new();
-        for p in form_urlencoded::parse(bytes.as_ref()) {
+        for p in form_urlencoded::parse(&bytes) {
             match p.0.as_ref() {
                 "user" => user = p.1.into_owned(),
                 "pass" => pass = p.1.into_owned(),
@@ -133,7 +133,7 @@ impl RegisterForm {
         let mut pass = String::new();
         let mut confirm_pass = String::new();
 
-        for p in form_urlencoded::parse(bytes.as_ref()) {
+        for p in form_urlencoded::parse(&bytes) {
             match p.0.as_ref() {
                 "user" => user = p.1.into_owned(),
                 "pass" => pass = p.1.into_owned(),
@@ -151,11 +151,11 @@ impl RegisterForm {
 
 async fn files_from_body(body: Body) -> Result<Vec<PathBuf>, Error> {
     let bytes = body::to_bytes(body).await?;
-    let files = form_urlencoded::parse(bytes.as_ref())
+    let files = form_urlencoded::parse(&bytes)
         .filter_map(|p| {
             if p.0 == "s" {
                 let percent_decoded = Cow::from(percent_encoding::percent_decode_str(&p.1));
-                PathBuf::from_cow(percent_decoded)
+                PathBuf::from_raw_vec(percent_decoded.into_owned())
                     .map_err(|e| error!("cannot decode {}: {}", p.1, e))
                     .ok()
             } else {
@@ -546,7 +546,7 @@ impl RustyShare {
         let mut body = request.into_body();
         while let Some(bytes) = body.next().await {
             let bytes = bytes?;
-            tokio::task::block_in_place(|| file.write_all(bytes.as_ref()))?;
+            tokio::task::block_in_place(|| file.write_all(&bytes))?;
         }
         Ok(())
     }
@@ -699,7 +699,8 @@ async fn run() -> Result<(), Error> {
 
 fn decode(s: &str) -> Result<PathBuf, Error> {
     let percent_decoded = Cow::from(percent_encoding::percent_decode_str(s));
-    let os_str = PathBuf::from_cow(percent_decoded).map_err(|_e| Error::InvalidArgument)?;
+    let os_str =
+        PathBuf::from_raw_vec(percent_decoded.into_owned()).map_err(|_e| Error::InvalidArgument)?;
     Ok(os_str)
 }
 
@@ -769,7 +770,7 @@ fn get_dir_entries(path: &Path) -> Result<Vec<ShareEntry>, Error> {
 }
 
 pub fn is_hidden(path: &OsStr) -> bool {
-    matches!(path.to_bytes().as_ref().iter().next(), Some(b'.'))
+    matches!(path.to_raw_bytes().iter().next(), Some(b'.'))
 }
 
 fn render_index(

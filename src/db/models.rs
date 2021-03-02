@@ -102,7 +102,7 @@ impl FromSql for PathBufWrapper {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
         match value {
             ValueRef::Text(p) | ValueRef::Blob(p) => Ok(Self(
-                PathBuf::from_bytes(p).map_err(|e| FromSqlError::Other(e.into()))?,
+                PathBuf::from_raw_vec(Vec::from(p)).map_err(|e| FromSqlError::Other(e.into()))?,
             )),
             _ => Err(FromSqlError::InvalidType),
         }

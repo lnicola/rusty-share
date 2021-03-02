@@ -160,7 +160,7 @@ impl SqliteStore {
             "insert into shares(name, path, access_level, upload_allowed) values(?, ?, ?, ?)",
             params![
                 share.name,
-                share.path.to_bytes().as_ref(),
+                share.path.to_raw_bytes().as_ref(),
                 share.access_level as i32,
                 share.upload_allowed
             ],

@@ -2,7 +2,7 @@ use crate::error::Error;
 use bytesize::ByteSize;
 use chrono::{DateTime, Local};
 use chrono_humanize::HumanTime;
-use os_str_bytes::OsStringBytes;
+use os_str_bytes::OsStrBytes;
 use percent_encoding::{AsciiSet, CONTROLS};
 use std::fs::{self, DirEntry};
 
@@ -52,7 +52,7 @@ impl ShareEntry {
         let is_dir = metadata.file_type().is_dir();
         let name = value.file_name();
         let display_name = display_name(name.to_string_lossy().into_owned(), is_dir);
-        let link = encode_link(name.into_vec().as_ref(), is_dir);
+        let link = encode_link(name.to_raw_bytes().as_ref(), is_dir);
         let size = if !is_dir {
             ByteSize::b(metadata.len()).to_string_as(false)
         } else {
