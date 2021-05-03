@@ -637,7 +637,7 @@ async fn run() -> Result<(), Error> {
         } => {
             let store = get_store(&db_path);
             register_user(&store, user, &pass)?;
-            return Ok(());
+            Ok(())
         }
         Command::ResetPassword {
             user,
@@ -646,7 +646,7 @@ async fn run() -> Result<(), Error> {
         } => {
             let store = get_store(&db_path);
             reset_password(&store, &user, &pass)?;
-            return Ok(());
+            Ok(())
         }
         Command::CreateShare {
             name,
@@ -661,7 +661,7 @@ async fn run() -> Result<(), Error> {
                 upload_allowed: false,
             };
             store.create_share(share)?;
-            return Ok(());
+            Ok(())
         }
         Command::Start {
             root,
@@ -693,7 +693,7 @@ async fn run() -> Result<(), Error> {
             let server = Server::from_tcp(listener)?.tcp_nodelay(true).serve(new_svc);
             return Ok(server.await?);
         }
-        Command::Help => return Ok(()),
+        Command::Help => Ok(()),
     }
 }
 
@@ -834,6 +834,7 @@ pub async fn authenticate(
         let user = store
             .find_user(name)?
             .and_then(|user| {
+                #[allow(clippy::redundant_clone)]
                 PasswordHash::new(&user.password.clone())
                     .ok()
                     .and_then(|hash| {

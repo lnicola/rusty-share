@@ -74,6 +74,7 @@ impl SqliteStore {
 
     pub fn find_user(&self, name: &str) -> DbResult<Option<User>> {
         let conn = self.pool.get()?;
+        #[allow(clippy::redundant_closure)]
         let user = conn
             .query_row(
                 "select *
@@ -112,6 +113,7 @@ impl SqliteStore {
 
     pub fn lookup_share(&self, name: &str, user_id: Option<i32>) -> DbResult<Option<Share>> {
         let conn = self.pool.get()?;
+        #[allow(clippy::redundant_closure)]
         let share = conn
             .query_row(
                 "select *
@@ -147,6 +149,7 @@ impl SqliteStore {
              )
              order by id",
         )?;
+        #[allow(clippy::redundant_closure)]
         let shares = stmt
             .query_map(params![user_id, user_id], |row| Share::try_from(row))?
             .collect::<Result<_, _>>()?;
