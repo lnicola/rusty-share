@@ -4,7 +4,7 @@ use std::io;
 use std::net::AddrParseError;
 use std::path::{PathBuf, StripPrefixError};
 
-use scrypt::password_hash::{HashError, HasherError};
+use scrypt::password_hash;
 
 #[derive(Debug)]
 pub enum Error {
@@ -42,10 +42,7 @@ pub enum Error {
         cause: rand_core::Error,
     },
     Hash {
-        cause: HashError,
-    },
-    Hasher {
-        cause: HasherError,
+        cause: password_hash::Error,
     },
 }
 
@@ -106,15 +103,9 @@ impl From<rand_core::Error> for Error {
     }
 }
 
-impl From<HashError> for Error {
-    fn from(cause: HashError) -> Self {
+impl From<password_hash::Error> for Error {
+    fn from(cause: password_hash::Error) -> Self {
         Self::Hash { cause }
-    }
-}
-
-impl From<HasherError> for Error {
-    fn from(cause: HasherError) -> Self {
-        Self::Hasher { cause }
     }
 }
 
@@ -141,7 +132,6 @@ impl Display for Error {
             Error::R2d2 { cause } => cause.fmt(f),
             Error::Rand { cause } => cause.fmt(f),
             Error::Hash { cause } => cause.fmt(f),
-            Error::Hasher { cause } => cause.fmt(f),
             Error::StreamCancelled => write!(f, "the archiving stream was cancelled unexpectedly"),
             Error::InvalidArgument => write!(f, "invalid argument"),
         }
