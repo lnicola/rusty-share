@@ -9,7 +9,7 @@ async-stream = "0.3"
 bytes = "1.0"
 bytesize = "1.0"
 chrono = { version = "0.4", default-features = false }
-chrono-humanize = "0.1"
+chrono-humanize = "0.2"
 futures-util = { version = "0.3", default-features = false }
 futures-executor = { version = "0.3", default-features = false, features = ["std"] }
 headers = "0.3"
