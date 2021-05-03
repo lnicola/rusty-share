@@ -26,9 +26,9 @@ pico-args = "0.4"
 pretty_env_logger = "0.4"
 rayon = "1.5"
 r2d2 = "0.8"
-r2d2_sqlite = "0.17"
+r2d2_sqlite = "0.18"
 rand_core = { version = "0.6.2", features = ["getrandom"] }
-rusqlite = "0.24"
+rusqlite = "0.25"
 scrypt = { version = "0.6" }
 tar = { version = "0.4", default-features = false }
 tokio = { version = "1.0", features = ["fs", "net", "rt", "rt-multi-thread", "sync"] }

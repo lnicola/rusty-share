@@ -4,7 +4,7 @@ use crate::Error;
 use os_str_bytes::OsStrBytes;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{params, OptionalExtension, NO_PARAMS};
+use rusqlite::{params, OptionalExtension};
 
 use std::convert::TryFrom;
 use std::path::Path;
@@ -26,10 +26,10 @@ impl SqliteStore {
 
     pub fn initialize_database(&self) -> DbResult<()> {
         let conn = self.pool.get()?;
-        conn.execute(include_str!("../../db/users.sql"), NO_PARAMS)?;
-        conn.execute(include_str!("../../db/sessions.sql"), NO_PARAMS)?;
-        conn.execute(include_str!("../../db/shares.sql"), NO_PARAMS)?;
-        conn.execute(include_str!("../../db/user_shares.sql"), NO_PARAMS)?;
+        conn.execute(include_str!("../../db/users.sql"), [])?;
+        conn.execute(include_str!("../../db/sessions.sql"), [])?;
+        conn.execute(include_str!("../../db/shares.sql"), [])?;
+        conn.execute(include_str!("../../db/user_shares.sql"), [])?;
         Ok(())
     }
 
@@ -49,9 +49,7 @@ impl SqliteStore {
 
     pub fn users_exist(&self) -> DbResult<bool> {
         let conn = self.pool.get()?;
-        let r = conn.query_row("select exists(select * from users)", NO_PARAMS, |r| {
-            r.get(0)
-        })?;
+        let r = conn.query_row("select exists(select * from users)", [], |r| r.get(0))?;
         Ok(r)
     }
 
