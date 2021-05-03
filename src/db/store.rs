@@ -35,12 +35,13 @@ impl SqliteStore {
 
     pub fn create_user(&self, user: NewUser) -> DbResult<User> {
         let conn = self.pool.get()?;
-        conn.execute(
-            "insert into users(name, password) values(?, ?)",
+        let id = conn.query_row(
+            "insert into users(name, password) values(?, ?) returning id",
             params![user.name, user.password],
+            |r| r.get(0),
         )?;
         let user = User {
-            id: conn.last_insert_rowid() as i32,
+            id,
             name: user.name,
             password: user.password,
         };
@@ -154,17 +155,18 @@ impl SqliteStore {
 
     pub fn create_share(&self, share: NewShare) -> DbResult<Share> {
         let conn = self.pool.get()?;
-        conn.execute(
-            "insert into shares(name, path, access_level, upload_allowed) values(?, ?, ?, ?)",
+        let id = conn.query_row(
+            "insert into shares(name, path, access_level, upload_allowed) values(?, ?, ?, ?) returning id",
             params![
                 share.name,
                 share.path.to_raw_bytes().as_ref(),
                 share.access_level as i32,
                 share.upload_allowed
             ],
+            |r| { r.get(0) }
         )?;
         let share = Share {
-            id: conn.last_insert_rowid() as i32,
+            id,
             name: share.name,
             path: share.path,
             access_level: share.access_level,
