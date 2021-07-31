@@ -175,7 +175,7 @@ impl RustyShare {
     ) -> Result<Option<Share>, Response> {
         task::block_in_place(move || {
             if let Some(store) = store {
-                let path = store.lookup_share(&name, user_id).map_err(|e| {
+                let path = store.lookup_share(name, user_id).map_err(|e| {
                     error!("{}", e);
                     response::internal_server_error()
                 })?;
@@ -677,7 +677,7 @@ async fn run() -> Result<(), Error> {
             );
             println!("Listening on http://{}", addr);
 
-            let store = db_path.as_ref().map(|db_path| get_store(&db_path));
+            let store = db_path.as_ref().map(|db_path| get_store(db_path));
             let rusty_share = RustyShare { root, store };
             let rusty_share = Arc::new(rusty_share);
 
@@ -781,13 +781,13 @@ fn render_index(
     user_name: Option<String>,
 ) -> Response {
     let enumerate_start = Instant::now();
-    match get_dir_entries(&path) {
+    match get_dir_entries(path) {
         Ok(entries) => {
             let render_start = Instant::now();
             let enumerate_time = render_start - enumerate_start;
             let rendered = page::index(
                 share_name,
-                &relative_path,
+                relative_path,
                 &entries,
                 upload_allowed,
                 user_name,

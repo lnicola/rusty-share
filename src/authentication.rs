@@ -38,7 +38,7 @@ fn check_session(
 
 impl Authentication {
     pub fn extract(store: &Option<SqliteStore>, uri: &Uri, cookie: Option<Cookie>) -> Self {
-        match check_session(&store, uri, cookie) {
+        match check_session(store, uri, cookie) {
             Ok((user_id, name)) => Authentication::User(user_id, name),
             Err(response) => Authentication::Error(response),
         }
