@@ -1,9 +1,14 @@
+use axum::extract::{Extension, UrlParams};
+use axum::handler::{any, get};
+use axum::response::IntoResponse;
+use axum::routing::RoutingDsl;
+use axum::{route, AddExtensionLayer};
 use futures_util::stream::StreamExt;
 use headers::{Cookie, HeaderMapExt};
 use http::header::CONTENT_TYPE;
 use http::{HeaderMap, HeaderValue, Method, Request};
 use http_serve::{self, ChunkedReadFile};
-use hyper::{body, service, Body, Server};
+use hyper::{body, Body, Server};
 use log::{error, info};
 use os_str_bytes::{OsStrBytes, OsStringBytes};
 use rand_core::{OsRng, RngCore};
@@ -217,7 +222,7 @@ impl RustyShare {
         }
     }
 
-    async fn index(&self) -> Result<Response, Error> {
+    pub async fn index(&self) -> Result<Response, Error> {
         Ok(response::found("/browse/"))
     }
 
@@ -267,15 +272,14 @@ impl RustyShare {
         Ok(response)
     }
 
-    async fn browse_or_archive(&self, request: Request<Body>) -> Result<Response, Error> {
+    async fn browse_or_archive(
+        &self,
+        share: &str,
+        request: Request<Body>,
+    ) -> Result<Response, Error> {
         let authentication = Self::get_authentication(&self.store, &request);
         let pb = decode(request.uri().path())
-            .map(|s| {
-                s.components()
-                    .skip(2)
-                    .map(|c| Path::new(c.as_os_str()))
-                    .collect::<PathBuf>()
-            })
+            .map(|s| s.components().skip(1).collect::<PathBuf>())
             .and_then(|pb| {
                 if check_for_path_traversal(&pb) {
                     Ok(pb)
@@ -284,28 +288,14 @@ impl RustyShare {
                 }
             });
         match pb {
-            Ok(pb) => {
-                let share_name = pb
-                    .components()
-                    .next()
-                    .unwrap()
-                    .as_os_str()
-                    .to_str()
-                    .unwrap()
-                    .to_string();
-
-                let path = pb
-                    .components()
-                    .skip(1)
-                    .map(|c| Path::new(c.as_os_str()))
-                    .collect::<PathBuf>();
+            Ok(path) => {
                 let (user_id, user_name) = match authentication {
                     Authentication::User(user_id, name) => {
                         info!(
                             "{} {} /browse/{}/{}",
                             name,
                             request.method(),
-                            share_name,
+                            share,
                             path.display()
                         );
                         (Some(user_id), Some(name))
@@ -314,14 +304,14 @@ impl RustyShare {
                         info!(
                             "anonymous {} /browse/{}/{}",
                             request.method(),
-                            share_name,
+                            share,
                             path.display()
                         );
                         (None, None)
                     }
                 };
 
-                let r = Self::lookup_share(&self.root, &self.store, &share_name, user_id).await;
+                let r = Self::lookup_share(&self.root, &self.store, share, user_id).await;
                 match r {
                     Ok(Some(share)) => {
                         if request.method() == Method::GET || request.method() == Method::HEAD {
@@ -344,15 +334,10 @@ impl RustyShare {
         }
     }
 
-    async fn upload(&self, request: Request<Body>) -> Result<Response, Error> {
+    async fn upload(&self, share: &str, request: Request<Body>) -> Result<Response, Error> {
         let authentication = Self::get_authentication(&self.store, &request);
         let pb = decode(request.uri().path())
-            .map(|s| {
-                s.components()
-                    .skip(2)
-                    .map(|c| Path::new(c.as_os_str()))
-                    .collect::<PathBuf>()
-            })
+            .map(|s| s.components().skip(1).collect::<PathBuf>())
             .and_then(|pb| {
                 if check_for_path_traversal(&pb) {
                     Ok(pb)
@@ -361,28 +346,14 @@ impl RustyShare {
                 }
             });
         match pb {
-            Ok(pb) => {
-                let share_name = pb
-                    .components()
-                    .next()
-                    .unwrap()
-                    .as_os_str()
-                    .to_str()
-                    .unwrap()
-                    .to_string();
-
-                let path = pb
-                    .components()
-                    .skip(1)
-                    .map(|c| Path::new(c.as_os_str()))
-                    .collect::<PathBuf>();
+            Ok(path) => {
                 let (user_id, _) = match authentication {
                     Authentication::User(user_id, name) => {
                         info!(
                             "{} {} /browse/{}/{}",
                             name,
                             request.method(),
-                            share_name,
+                            share,
                             path.display()
                         );
                         (Some(user_id), Some(name))
@@ -391,14 +362,14 @@ impl RustyShare {
                         info!(
                             "anonymous {} /browse/{}/{}",
                             request.method(),
-                            share_name,
+                            share,
                             path.display()
                         );
                         (None, None)
                     }
                 };
 
-                let r = Self::lookup_share(&self.root, &self.store, &share_name, user_id).await;
+                let r = Self::lookup_share(&self.root, &self.store, share, user_id).await;
                 match r {
                     Ok(Some(share)) if share.upload_allowed => {
                         match RustyShare::do_upload(&share.path.join(&path), request).await {
@@ -506,7 +477,7 @@ impl RustyShare {
             Ok(metadata) => {
                 if metadata.is_dir() {
                     if !uri_path.ends_with('/') {
-                        response::found(&(uri_path + "/"))
+                        response::found(&format!("/browse/{}/{}/", share.name, uri_path))
                     } else {
                         task::block_in_place(move || {
                             render_index(
@@ -592,24 +563,6 @@ impl RustyShare {
             Ok(response)
         })
     }
-
-    pub async fn handle_request(self: Arc<Self>, req: Request<Body>) -> Result<Response, Error> {
-        match (req.method(), req.uri().path()) {
-            (&Method::GET, "/") => self.index().await,
-            (&Method::GET, "/register") | (&Method::POST, "/register") => self.register(req).await,
-            (&Method::GET, "/login") => self.login_page().await,
-            (&Method::POST, "/login") => self.login(req).await,
-            (&Method::GET, "/favicon.ico") => self.favicon().await,
-            (&Method::GET, "/browse/") => self.browse_shares(req).await,
-            (&Method::GET, path) | (&Method::HEAD, path) | (&Method::POST, path)
-                if path.starts_with("/browse/") =>
-            {
-                self.browse_or_archive(req).await
-            }
-            (&Method::PUT, path) if path.starts_with("/browse") => self.upload(req).await,
-            _ => Ok(response::not_found()),
-        }
-    }
 }
 
 fn get_store(path: &Path) -> SqliteStore {
@@ -624,6 +577,50 @@ fn get_store(path: &Path) -> SqliteStore {
     }
 
     store
+}
+
+async fn index(state: Extension<Arc<RustyShare>>) -> impl IntoResponse {
+    state.0.index().await.unwrap()
+}
+
+async fn register(state: Extension<Arc<RustyShare>>, req: Request<Body>) -> impl IntoResponse {
+    state.0.register(req).await.unwrap()
+}
+
+async fn login_page(state: Extension<Arc<RustyShare>>) -> impl IntoResponse {
+    state.0.login_page().await.unwrap()
+}
+
+async fn login_post(state: Extension<Arc<RustyShare>>, req: Request<Body>) -> impl IntoResponse {
+    state.0.login(req).await.unwrap()
+}
+
+async fn favicon(state: Extension<Arc<RustyShare>>) -> impl IntoResponse {
+    state.0.favicon().await.unwrap()
+}
+
+async fn share(
+    UrlParams((share,)): UrlParams<(String,)>,
+    state: Extension<Arc<RustyShare>>,
+    req: Request<Body>,
+) -> impl IntoResponse {
+    if req.method() == Method::GET && share.is_empty() {
+        state.0.browse_shares(req).await.unwrap()
+    } else {
+        state.0.browse_or_archive(&share, req).await.unwrap()
+    }
+}
+
+async fn share_redirect(UrlParams((share,)): UrlParams<(String,)>) -> impl IntoResponse {
+    response::found(&format!("{}/", share))
+}
+
+async fn upload(
+    UrlParams((share,)): UrlParams<(String,)>,
+    state: Extension<Arc<RustyShare>>,
+    req: Request<Body>,
+) -> impl IntoResponse {
+    state.0.upload(&share, req).await.unwrap()
 }
 
 async fn run() -> Result<(), Error> {
@@ -681,16 +678,28 @@ async fn run() -> Result<(), Error> {
             let rusty_share = RustyShare { root, store };
             let rusty_share = Arc::new(rusty_share);
 
-            let new_svc = service::make_service_fn(move |_| {
-                let rusty_share = Arc::clone(&rusty_share);
-                futures_util::future::ok::<_, Error>(service::service_fn(move |req| {
-                    RustyShare::handle_request(Arc::clone(&rusty_share), req)
-                }))
-            });
+            let state = Arc::clone(&rusty_share);
+
+            let app = route("/", get(index))
+                .route("/register", any(register))
+                .route("/login", get(login_page))
+                .route("/login", get(login_post))
+                .route("/favicon.ico", get(favicon))
+                .route(
+                    "/browse/:share",
+                    get(share_redirect).post(share_redirect).put(upload),
+                )
+                .nest(
+                    "/browse/:share/",
+                    get(share).head(share).post(share).put(upload),
+                )
+                .layer(AddExtensionLayer::new(state));
 
             let listener = std::net::TcpListener::bind(&addr)?;
 
-            let server = Server::from_tcp(listener)?.tcp_nodelay(true).serve(new_svc);
+            let server = Server::from_tcp(listener)?
+                .tcp_nodelay(true)
+                .serve(app.into_make_service());
             return Ok(server.await?);
         }
         Command::Help => Ok(()),
