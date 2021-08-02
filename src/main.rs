@@ -29,6 +29,7 @@ use tar::Builder;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 use tokio::task;
+use tower_http::trace::TraceLayer;
 use url::form_urlencoded;
 use walkdir::WalkDir;
 
@@ -624,6 +625,8 @@ async fn upload(
 }
 
 async fn run() -> Result<(), Error> {
+    tracing_subscriber::fmt::init();
+
     let args = Args::parse().unwrap();
 
     match args.command {
@@ -693,7 +696,8 @@ async fn run() -> Result<(), Error> {
                     "/browse/:share/",
                     get(share).head(share).post(share).put(upload),
                 )
-                .layer(AddExtensionLayer::new(state));
+                .layer(AddExtensionLayer::new(state))
+                .layer(TraceLayer::new_for_http());
 
             let listener = std::net::TcpListener::bind(&addr)?;
 
@@ -739,7 +743,6 @@ fn check_for_path_traversal(path: &Path) -> bool {
 }
 
 fn main() {
-    pretty_env_logger::init();
     unsafe {
         rusqlite::bypass_sqlite_version_check();
     }
