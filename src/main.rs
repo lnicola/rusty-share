@@ -580,19 +580,23 @@ async fn share(
     state: Extension<Arc<RustyShare>>,
     req: Request<Body>,
 ) -> impl IntoResponse {
-    if req.method() == Method::GET && share.is_empty() {
-        state.0.browse_shares(req).await.unwrap()
-    } else {
-        state
-            .0
-            .browse_or_archive(&share, local_path, req)
-            .await
-            .unwrap()
-    }
+    state
+        .0
+        .browse_or_archive(&share, local_path, req)
+        .await
+        .unwrap()
 }
 
-async fn share_redirect(UrlParams((share,)): UrlParams<(String,)>) -> impl IntoResponse {
-    response::found(&format!("{}/", share))
+async fn share_redirect(
+    state: Extension<Arc<RustyShare>>,
+    UrlParams((share,)): UrlParams<(String,)>,
+    req: Request<Body>,
+) -> impl IntoResponse {
+    if share.is_empty() {
+        state.0.browse_shares(req).await.unwrap()
+    } else {
+        response::found(&format!("{}/", share))
+    }
 }
 
 async fn upload(
