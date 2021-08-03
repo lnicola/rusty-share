@@ -555,23 +555,23 @@ fn get_store(path: &Path) -> SqliteStore {
 }
 
 async fn index(state: Extension<Arc<RustyShare>>) -> impl IntoResponse {
-    state.0.index().await.unwrap()
+    state.index().await.unwrap()
 }
 
 async fn register(state: Extension<Arc<RustyShare>>, req: Request<Body>) -> impl IntoResponse {
-    state.0.register(req).await.unwrap()
+    state.register(req).await.unwrap()
 }
 
 async fn login_page(state: Extension<Arc<RustyShare>>) -> impl IntoResponse {
-    state.0.login_page().await.unwrap()
+    state.login_page().await.unwrap()
 }
 
 async fn login_post(state: Extension<Arc<RustyShare>>, req: Request<Body>) -> impl IntoResponse {
-    state.0.login(req).await.unwrap()
+    state.login(req).await.unwrap()
 }
 
 async fn favicon(state: Extension<Arc<RustyShare>>) -> impl IntoResponse {
-    state.0.favicon().await.unwrap()
+    state.favicon().await.unwrap()
 }
 
 async fn share(
@@ -581,19 +581,18 @@ async fn share(
     req: Request<Body>,
 ) -> impl IntoResponse {
     state
-        .0
         .browse_or_archive(&share, local_path, req)
         .await
         .unwrap()
 }
 
 async fn share_redirect(
-    state: Extension<Arc<RustyShare>>,
     UrlParams((share,)): UrlParams<(String,)>,
+    state: Extension<Arc<RustyShare>>,
     req: Request<Body>,
 ) -> impl IntoResponse {
     if share.is_empty() {
-        state.0.browse_shares(req).await.unwrap()
+        state.browse_shares(req).await.unwrap()
     } else {
         response::found(&format!("{}/", share))
     }
@@ -605,7 +604,7 @@ async fn upload(
     state: Extension<Arc<RustyShare>>,
     req: Request<Body>,
 ) -> impl IntoResponse {
-    state.0.upload(&share, &local_path, req).await.unwrap()
+    state.upload(&share, &local_path, req).await.unwrap()
 }
 
 async fn run() -> Result<(), Error> {
