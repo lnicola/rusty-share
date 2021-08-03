@@ -1,4 +1,5 @@
-use axum::extract::{Extension, UrlParams};
+use async_trait::async_trait;
+use axum::extract::{Extension, FromRequest, RequestParts, UrlParams};
 use axum::handler::{any, get};
 use axum::response::IntoResponse;
 use axum::routing::RoutingDsl;
@@ -276,120 +277,93 @@ impl RustyShare {
     async fn browse_or_archive(
         &self,
         share: &str,
+        local_path: PathBuf,
         request: Request<Body>,
     ) -> Result<Response, Error> {
         let authentication = Self::get_authentication(&self.store, &request);
-        let pb = decode(request.uri().path())
-            .map(|s| s.components().skip(1).collect::<PathBuf>())
-            .and_then(|pb| {
-                if check_for_path_traversal(&pb) {
-                    Ok(pb)
-                } else {
-                    Err(Error::InvalidArgument)
-                }
-            });
-        match pb {
-            Ok(path) => {
-                let (user_id, user_name) = match authentication {
-                    Authentication::User(user_id, name) => {
-                        info!(
-                            "{} {} /browse/{}/{}",
-                            name,
-                            request.method(),
-                            share,
-                            path.display()
-                        );
-                        (Some(user_id), Some(name))
-                    }
-                    Authentication::Error(_) => {
-                        info!(
-                            "anonymous {} /browse/{}/{}",
-                            request.method(),
-                            share,
-                            path.display()
-                        );
-                        (None, None)
-                    }
-                };
+        let (user_id, user_name) = match authentication {
+            Authentication::User(user_id, name) => {
+                info!(
+                    "{} {} /browse/{}/{}",
+                    name,
+                    request.method(),
+                    share,
+                    local_path.display()
+                );
+                (Some(user_id), Some(name))
+            }
+            Authentication::Error(_) => {
+                info!(
+                    "anonymous {} /browse/{}/{}",
+                    request.method(),
+                    share,
+                    local_path.display()
+                );
+                (None, None)
+            }
+        };
 
-                let r = Self::lookup_share(&self.root, &self.store, share, user_id).await;
-                match r {
-                    Ok(Some(share)) => {
-                        if request.method() == Method::GET || request.method() == Method::HEAD {
-                            RustyShare::browse(share, path, request, user_name).await
-                        } else if request.method() == Method::POST {
-                            let files = files_from_body(request.into_body()).await?;
-                            RustyShare::archive(share.path, path, files).await
-                        } else {
-                            Ok(response::method_not_allowed())
-                        }
-                    }
-                    Ok(None) => Ok(response::login_redirect(request.uri(), false)),
-                    Err(res) => Ok(res),
+        let r = Self::lookup_share(&self.root, &self.store, share, user_id).await;
+        match r {
+            Ok(Some(share)) => {
+                if request.method() == Method::GET || request.method() == Method::HEAD {
+                    RustyShare::browse(share, local_path, request, user_name).await
+                } else if request.method() == Method::POST {
+                    let files = files_from_body(request.into_body()).await?;
+                    RustyShare::archive(share.path, local_path, files).await
+                } else {
+                    Ok(response::method_not_allowed())
                 }
             }
-            Err(e) => {
-                error!("{}", e);
-                Ok(response::bad_request())
-            }
+            Ok(None) => Ok(response::login_redirect(request.uri(), false)),
+            Err(res) => Ok(res),
         }
     }
 
-    async fn upload(&self, share: &str, request: Request<Body>) -> Result<Response, Error> {
+    async fn upload(
+        &self,
+        share: &str,
+        local_path: &Path,
+        request: Request<Body>,
+    ) -> Result<Response, Error> {
         let authentication = Self::get_authentication(&self.store, &request);
-        let pb = decode(request.uri().path())
-            .map(|s| s.components().skip(1).collect::<PathBuf>())
-            .and_then(|pb| {
-                if check_for_path_traversal(&pb) {
-                    Ok(pb)
-                } else {
-                    Err(Error::InvalidArgument)
-                }
-            });
-        match pb {
-            Ok(path) => {
-                let (user_id, _) = match authentication {
-                    Authentication::User(user_id, name) => {
-                        info!(
-                            "{} {} /browse/{}/{}",
-                            name,
-                            request.method(),
-                            share,
-                            path.display()
-                        );
-                        (Some(user_id), Some(name))
-                    }
-                    Authentication::Error(_) => {
-                        info!(
-                            "anonymous {} /browse/{}/{}",
-                            request.method(),
-                            share,
-                            path.display()
-                        );
-                        (None, None)
-                    }
-                };
 
-                let r = Self::lookup_share(&self.root, &self.store, share, user_id).await;
-                match r {
-                    Ok(Some(share)) if share.upload_allowed => {
-                        match RustyShare::do_upload(&share.path.join(&path), request).await {
-                            Ok(_) => Ok(response::no_content()),
-                            Err(e) => {
-                                error!("{}", e);
-                                Ok(response::internal_server_error())
-                            }
-                        }
+        let (user_id, _) = match authentication {
+            Authentication::User(user_id, name) => {
+                info!(
+                    "{} {} /browse/{}/{}",
+                    name,
+                    request.method(),
+                    share,
+                    local_path.display()
+                );
+                (Some(user_id), Some(name))
+            }
+            Authentication::Error(_) => {
+                info!(
+                    "anonymous {} /browse/{}/{}",
+                    request.method(),
+                    share,
+                    local_path.display()
+                );
+                (None, None)
+            }
+        };
+
+        let r = Self::lookup_share(&self.root, &self.store, share, user_id).await;
+        match r {
+            Ok(Some(share)) if share.upload_allowed => {
+                match RustyShare::do_upload(&share.path.join(&local_path), request).await {
+                    Ok(_) => Ok(response::no_content()),
+                    Err(e) => {
+                        error!("{}", e);
+                        Ok(response::internal_server_error())
                     }
-                    Ok(None) => Ok(response::login_redirect(request.uri(), false)),
-                    Ok(_) => Ok(response::forbidden()),
-                    Err(res) => Ok(res),
                 }
             }
-            Err(e) => {
-                error!("{}", e);
-                Ok(response::bad_request())
-            }
+            Ok(None) => Ok(response::login_redirect(request.uri(), false)),
+            Ok(_) => Ok(response::forbidden()),
+            Err(res) => Ok(res),
         }
     }
 
@@ -602,13 +576,18 @@ async fn favicon(state: Extension<Arc<RustyShare>>) -> impl IntoResponse {
 
 async fn share(
     UrlParams((share,)): UrlParams<(String,)>,
+    LocalPath(local_path): LocalPath,
     state: Extension<Arc<RustyShare>>,
     req: Request<Body>,
 ) -> impl IntoResponse {
     if req.method() == Method::GET && share.is_empty() {
         state.0.browse_shares(req).await.unwrap()
     } else {
-        state.0.browse_or_archive(&share, req).await.unwrap()
+        state
+            .0
+            .browse_or_archive(&share, local_path, req)
+            .await
+            .unwrap()
     }
 }
 
@@ -618,10 +597,11 @@ async fn share_redirect(UrlParams((share,)): UrlParams<(String,)>) -> impl IntoR
 
 async fn upload(
     UrlParams((share,)): UrlParams<(String,)>,
+    LocalPath(local_path): LocalPath,
     state: Extension<Arc<RustyShare>>,
     req: Request<Body>,
 ) -> impl IntoResponse {
-    state.0.upload(&share, req).await.unwrap()
+    state.0.upload(&share, &local_path, req).await.unwrap()
 }
 
 async fn run() -> Result<(), Error> {
@@ -740,6 +720,41 @@ fn check_for_path_traversal(path: &Path) -> bool {
     }
 
     true
+}
+
+struct LocalPath(PathBuf);
+
+struct PathTraversalAttempt;
+
+impl IntoResponse for PathTraversalAttempt {
+    fn into_response(self) -> http::Response<Body> {
+        response::bad_request()
+    }
+}
+
+#[async_trait]
+impl<B: Send> FromRequest<B> for LocalPath {
+    type Rejection = PathTraversalAttempt;
+
+    async fn from_request(req: &mut RequestParts<B>) -> Result<Self, Self::Rejection> {
+        match req.uri() {
+            Some(uri) => {
+                let pb = decode(uri.path())
+                    .map(|s| s.components().skip(1).collect::<PathBuf>())
+                    .and_then(|pb| {
+                        if check_for_path_traversal(&pb) {
+                            Ok(LocalPath(pb))
+                        } else {
+                            Err(Error::InvalidArgument)
+                        }
+                    });
+                pb.map_err(|_| PathTraversalAttempt)
+            }
+            None => {
+                unreachable!()
+            }
+        }
+    }
 }
 
 fn main() {
