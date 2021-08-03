@@ -1,7 +1,14 @@
+use std::sync::Arc;
+
 use crate::db::SqliteStore;
 use crate::response;
 use crate::Response;
+use crate::RustyShare;
+use async_trait::async_trait;
+use axum::extract::FromRequest;
+use axum::extract::RequestParts;
 use headers::Cookie;
+use headers::HeaderMapExt;
 use http::Uri;
 use log::error;
 
@@ -36,11 +43,19 @@ fn check_session(
     Ok(r)
 }
 
-impl Authentication {
-    pub fn extract(store: &Option<SqliteStore>, uri: &Uri, cookie: Option<Cookie>) -> Self {
-        match check_session(store, uri, cookie) {
+#[async_trait]
+impl<B: Send> FromRequest<B> for Authentication {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request(req: &mut RequestParts<B>) -> Result<Self, Self::Rejection> {
+        // TODO: block or block_in_place
+        let rusty_share = req.extensions().unwrap().get::<Arc<RustyShare>>().unwrap();
+        let store = &rusty_share.store;
+        let cookie = req.headers().unwrap().typed_get::<Cookie>();
+        let authentication = match check_session(store, req.uri().unwrap(), cookie) {
             Ok((user_id, name)) => Authentication::User(user_id, name),
             Err(response) => Authentication::Error(response),
-        }
+        };
+        Ok(authentication)
     }
 }

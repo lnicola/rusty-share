@@ -5,7 +5,6 @@ use axum::response::IntoResponse;
 use axum::routing::RoutingDsl;
 use axum::{route, AddExtensionLayer};
 use futures_util::stream::StreamExt;
-use headers::{Cookie, HeaderMapExt};
 use http::header::CONTENT_TYPE;
 use http::{HeaderMap, HeaderValue, Method, Request};
 use http_serve::{self, ChunkedReadFile};
@@ -278,9 +277,9 @@ impl RustyShare {
         &self,
         share: &str,
         local_path: PathBuf,
+        authentication: Authentication,
         request: Request<Body>,
     ) -> Result<Response, Error> {
-        let authentication = Self::get_authentication(&self.store, &request);
         let (user_id, user_name) = match authentication {
             Authentication::User(user_id, name) => {
                 info!(
@@ -324,10 +323,9 @@ impl RustyShare {
         &self,
         share: &str,
         local_path: &Path,
+        authentication: Authentication,
         request: Request<Body>,
     ) -> Result<Response, Error> {
-        let authentication = Self::get_authentication(&self.store, &request);
-
         let (user_id, _) = match authentication {
             Authentication::User(user_id, name) => {
                 info!(
@@ -406,9 +404,7 @@ impl RustyShare {
         }
     }
 
-    async fn browse_shares(&self, request: Request<Body>) -> Result<Response, Error> {
-        let authentication =
-            task::block_in_place(move || Self::get_authentication(&self.store, &request));
+    async fn browse_shares(&self, authentication: Authentication) -> Result<Response, Error> {
         let response = match authentication {
             Authentication::User(user_id, name) => {
                 info!("{} GET /browse/", name);
@@ -428,14 +424,6 @@ impl RustyShare {
             }
         };
         Ok(response)
-    }
-
-    fn get_authentication(store: &Option<SqliteStore>, request: &Request<Body>) -> Authentication {
-        Authentication::extract(
-            store,
-            request.uri(),
-            request.headers().typed_get::<Cookie>(),
-        )
     }
 
     async fn browse(
@@ -577,22 +565,23 @@ async fn favicon(state: Extension<Arc<RustyShare>>) -> impl IntoResponse {
 async fn share(
     UrlParams((share,)): UrlParams<(String,)>,
     LocalPath(local_path): LocalPath,
+    authentication: Authentication,
     state: Extension<Arc<RustyShare>>,
     req: Request<Body>,
 ) -> impl IntoResponse {
     state
-        .browse_or_archive(&share, local_path, req)
+        .browse_or_archive(&share, local_path, authentication, req)
         .await
         .unwrap()
 }
 
 async fn share_redirect(
     UrlParams((share,)): UrlParams<(String,)>,
+    authentication: Authentication,
     state: Extension<Arc<RustyShare>>,
-    req: Request<Body>,
 ) -> impl IntoResponse {
     if share.is_empty() {
-        state.browse_shares(req).await.unwrap()
+        state.browse_shares(authentication).await.unwrap()
     } else {
         response::found(&format!("{}/", share))
     }
@@ -601,10 +590,14 @@ async fn share_redirect(
 async fn upload(
     UrlParams((share,)): UrlParams<(String,)>,
     LocalPath(local_path): LocalPath,
+    authentication: Authentication,
     state: Extension<Arc<RustyShare>>,
     req: Request<Body>,
 ) -> impl IntoResponse {
-    state.upload(&share, &local_path, req).await.unwrap()
+    state
+        .upload(&share, &local_path, authentication, req)
+        .await
+        .unwrap()
 }
 
 async fn run() -> Result<(), Error> {
