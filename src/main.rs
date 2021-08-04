@@ -793,7 +793,6 @@ pub async fn authenticate(
         let user = store
             .find_user(name)?
             .and_then(|user| {
-                #[allow(clippy::redundant_clone)]
                 PasswordHash::new(&user.password.clone())
                     .ok()
                     .and_then(|hash| {
