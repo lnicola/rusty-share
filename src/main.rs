@@ -9,7 +9,6 @@ use http::header::CONTENT_TYPE;
 use http::{HeaderMap, HeaderValue, Method, Request};
 use http_serve::{self, ChunkedReadFile};
 use hyper::{body, Body, Server};
-use log::{error, info};
 use os_str_bytes::{OsStrBytes, OsStringBytes};
 use rand_core::{OsRng, RngCore};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -67,7 +66,7 @@ fn get_archive(archive: Archive) -> Body {
     let f = task::spawn_blocking(move || {
         for entry in archive.entries() {
             if let Err(e) = entry.write_to(&mut builder) {
-                error!("{}", e);
+                tracing::error!("{}", e);
             }
         }
         builder.finish()
@@ -122,7 +121,7 @@ async fn files_from_body(body: Body) -> Result<Vec<PathBuf>, Error> {
             if p.0 == "s" {
                 let percent_decoded = Cow::from(percent_encoding::percent_decode_str(&p.1));
                 PathBuf::from_raw_vec(percent_decoded.into_owned())
-                    .map_err(|e| error!("cannot decode {}: {}", p.1, e))
+                    .map_err(|e| tracing::error!("cannot decode {}: {}", p.1, e))
                     .ok()
             } else {
                 None
@@ -142,7 +141,7 @@ impl RustyShare {
         task::block_in_place(move || {
             if let Some(store) = store {
                 let path = store.lookup_share(name, user_id).map_err(|e| {
-                    error!("{}", e);
+                    tracing::error!("{}", e);
                     response::internal_server_error()
                 })?;
                 Ok(path)
@@ -167,7 +166,7 @@ impl RustyShare {
         if let Some(store) = store {
             task::block_in_place(move || {
                 let shares = store.get_accessible_shares(user_id).map_err(|e| {
-                    error!("{}", e);
+                    tracing::error!("{}", e);
                     response::internal_server_error()
                 })?;
                 Ok(shares)
@@ -191,20 +190,6 @@ impl RustyShare {
         Ok(response::not_found())
     }
 
-    async fn login(
-        &self,
-        login_form: &LoginForm,
-        redirect: Option<Query<Redirect>>,
-    ) -> Result<Response, Error> {
-        Self::login_action(
-            self.store.as_ref(),
-            redirect.map(|r| r.0.redirect),
-            &login_form.user,
-            &login_form.pass,
-        )
-        .await
-    }
-
     async fn browse_or_archive(
         &self,
         share: &str,
@@ -214,7 +199,7 @@ impl RustyShare {
     ) -> Result<Response, Error> {
         let (user_id, user_name) = match authentication {
             Authentication::User(user_id, name) => {
-                info!(
+                tracing::info!(
                     "{} {} /browse/{}/{}",
                     name,
                     request.method(),
@@ -224,7 +209,7 @@ impl RustyShare {
                 (Some(user_id), Some(name))
             }
             Authentication::Error(_) => {
-                info!(
+                tracing::info!(
                     "anonymous {} /browse/{}/{}",
                     request.method(),
                     share,
@@ -260,7 +245,7 @@ impl RustyShare {
     ) -> Result<Response, Error> {
         let (user_id, _) = match authentication {
             Authentication::User(user_id, name) => {
-                info!(
+                tracing::info!(
                     "{} {} /browse/{}/{}",
                     name,
                     request.method(),
@@ -270,7 +255,7 @@ impl RustyShare {
                 (Some(user_id), Some(name))
             }
             Authentication::Error(_) => {
-                info!(
+                tracing::info!(
                     "anonymous {} /browse/{}/{}",
                     request.method(),
                     share,
@@ -286,7 +271,7 @@ impl RustyShare {
                 match RustyShare::do_upload(&share.path.join(&local_path), request).await {
                     Ok(_) => Ok(response::no_content()),
                     Err(e) => {
-                        error!("{}", e);
+                        tracing::error!("{}", e);
                         Ok(response::internal_server_error())
                     }
                 }
@@ -315,10 +300,10 @@ impl RustyShare {
             let redirect = redirect.unwrap_or_else(|| String::from("/browse/"));
             let session = authenticate(store, user, pass).await?;
             if let Some(session_id) = session {
-                info!("Authenticating {}: success", user);
+                tracing::info!("Authenticating {}: success", user);
                 response::login_ok(hex::encode(&session_id), &redirect)
             } else {
-                info!("Authenticating {}: failed", user);
+                tracing::info!("Authenticating {}: failed", user);
                 page::login(Some(
                     "Login failed. Please contact the site owner to reset your password.",
                 ))
@@ -332,7 +317,7 @@ impl RustyShare {
     async fn browse_shares(&self, authentication: Authentication) -> Result<Response, Error> {
         let response = match authentication {
             Authentication::User(user_id, name) => {
-                info!("{} GET /browse/", name);
+                tracing::info!("{} GET /browse/", name);
                 let r = Self::get_shares(&self.store, Some(user_id)).await;
                 match r {
                     Ok(shares) => page::shares(shares, Some(name)),
@@ -340,7 +325,7 @@ impl RustyShare {
                 }
             }
             Authentication::Error(_) => {
-                info!("anonymous GET /browse/");
+                tracing::info!("anonymous GET /browse/");
                 let r = Self::get_shares(&self.store, None).await;
                 match r {
                     Ok(shares) => page::shares(shares, None),
@@ -388,7 +373,8 @@ impl RustyShare {
                 }
             }
             Err(e) => {
-                error!("{}", Error::from_io(e, disk_path));
+                let e = Error::from_io(e, disk_path);
+                tracing::error!("{}", e);
                 response::not_found()
             }
         };
@@ -427,7 +413,7 @@ impl RustyShare {
             let response = {
                 let mut archive = Archive::new();
                 for file in &files {
-                    info!("{}", file.display());
+                    tracing::info!("{}", file.display());
                     let entries = WalkDir::new(disk_path.join(file))
                         .into_iter()
                         .filter_entry(|e| !is_hidden(e.file_name()));
@@ -436,7 +422,7 @@ impl RustyShare {
                             .map_err(Error::from)
                             .and_then(|entry| archive.add_entry(&disk_path, entry))
                         {
-                            error!("{}", e);
+                            tracing::error!("{}", e);
                         }
                     }
                 }
@@ -458,7 +444,7 @@ fn get_store(path: &Path) -> SqliteStore {
     let store = SqliteStore::new(path).unwrap();
 
     if should_initialize {
-        info!("Initializing database");
+        tracing::info!("Initializing database");
         store
             .initialize_database()
             .expect("unable to create database");
@@ -480,7 +466,14 @@ async fn login_post(
     redirect: Option<Query<Redirect>>,
     login_form: Form<LoginForm>,
 ) -> impl IntoResponse {
-    state.login(&login_form, redirect).await.unwrap()
+    let response = RustyShare::login_action(
+        state.store.as_ref(),
+        redirect.map(|r| r.0.redirect),
+        &login_form.user,
+        &login_form.pass,
+    )
+    .await;
+    response.unwrap()
 }
 
 async fn favicon(state: Extension<Arc<RustyShare>>) -> impl IntoResponse {
@@ -689,7 +682,7 @@ fn dir_entries(path: &Path) -> Result<impl Iterator<Item = DirEntry>, Error> {
         .map_err(|e| Error::from_io(e, path.to_path_buf()))?
         .filter_map(|file| {
             file.map_err(|e| {
-                error!("{}", e);
+                tracing::error!("{}", e);
                 e
             })
             .ok()
@@ -704,7 +697,7 @@ fn get_dir_entries(path: &Path) -> Result<Vec<ShareEntry>, Error> {
         .filter_map(|entry| match ShareEntry::try_from(&entry) {
             Ok(e) => Some(e),
             Err(e) => {
-                error!("{}", e);
+                tracing::error!("{}", e);
                 None
             }
         })
@@ -739,7 +732,7 @@ fn render_index(
                 user_name,
             );
             let render_time = Instant::now() - render_start;
-            info!(
+            tracing::info!(
                 "enumerate: {} ms, render: {} ms",
                 enumerate_time.as_millis(),
                 render_time.as_millis()
@@ -747,7 +740,7 @@ fn render_index(
             rendered
         }
         Err(e) => {
-            error!("{}", e);
+            tracing::error!("{}", e);
             response::internal_server_error()
         }
     }
@@ -788,7 +781,11 @@ pub async fn authenticate(
                             .verify_password(password.as_bytes(), &hash)
                             .map(|_| user)
                             .map_err(|e| {
-                                error!("Password verification failed for user {}: {}", name, e)
+                                tracing::error!(
+                                    "Password verification failed for user {}: {}",
+                                    name,
+                                    e
+                                )
                             })
                             .ok()
                     })
@@ -796,11 +793,11 @@ pub async fn authenticate(
             .and_then(|user| {
                 let mut session_id = [0; 16];
                 if let Err(e) = OsRng.try_fill_bytes(&mut session_id) {
-                    error!("Error generating session id for user id {}: {}", user.id, e);
+                    tracing::error!("Error generating session id for user id {}: {}", user.id, e);
                     return None;
                 }
                 if let Err(e) = store.create_session(&session_id, user.id) {
-                    error!("Error saving session for user id {}: {}", user.id, e);
+                    tracing::error!("Error saving session for user id {}: {}", user.id, e);
                 }
 
                 Some(session_id)

@@ -6,6 +6,7 @@ edition = "2018"
 
 [dependencies]
 async-stream = "0.3"
+async-trait = "0.1"
 axum = { version = "0.1", git = "https://github.com/tokio-rs/axum" }
 bytes = "1.0"
 bytesize = "1.0"
@@ -27,18 +28,17 @@ hyper = { version = "0.14", features = [
     "stream",
     "tcp",
 ] }
-log = "0.4"
 mime_guess = "2.0"
 os_str_bytes = "3.1"
 percent-encoding = "2.1"
 pico-args = "0.4"
-pretty_env_logger = "0.4"
 rayon = "1.5"
 r2d2 = "0.8"
 r2d2_sqlite = "0.18"
 rand_core = { version = "0.6.2", features = ["getrandom"] }
 rusqlite = "0.25"
 scrypt = { version = "0.7" }
+serde = { version = "1.0", features = ["derive"] }
 tar = { version = "0.4", default-features = false }
 tokio = { version = "1.6", features = [
     "fs",
@@ -47,12 +47,11 @@ tokio = { version = "1.6", features = [
     "rt-multi-thread",
     "sync",
 ] }
+tower-http = { version = "0.1", features = ["trace"] }
+tracing = "0.1"
+tracing-subscriber = "0.2"
 url = "2.2"
 walkdir = "2.3"
-tracing-subscriber = "0.2.19"
-tower-http = { version = "0.1", features = ["trace"] }
-async-trait = "0.1.51"
-serde = { version = "1.0", features = ["derive"] }
 
 [features]
 default = ["bundled-windows"]

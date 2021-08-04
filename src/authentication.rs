@@ -10,7 +10,6 @@ use axum::extract::RequestParts;
 use headers::Cookie;
 use headers::HeaderMapExt;
 use http::Uri;
-use log::error;
 
 pub enum Authentication {
     User(i32, String),
@@ -27,13 +26,13 @@ fn check_session(
         let cookie = cookie.ok_or_else(redirect)?;
         let session_id = cookie.get("sid").ok_or_else(redirect)?;
         let session_id = hex::decode(session_id).map_err(|e| {
-            error!("{}", e);
+            tracing::error!("{}", e);
             redirect()
         })?;
         store
             .lookup_session(&session_id)
             .map_err(|e| {
-                error!("{}", e);
+                tracing::error!("{}", e);
                 response::internal_server_error()
             })?
             .ok_or_else(redirect)?

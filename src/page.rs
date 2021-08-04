@@ -6,7 +6,6 @@ use horrorshow::{html, Raw, Template};
 use http::header::SET_COOKIE;
 use http::{HeaderValue, Response};
 use hyper::Body;
-use log::error;
 use std::path::Path;
 
 pub fn index(
@@ -80,7 +79,7 @@ pub fn index(
     match page.into_string() {
         Ok(page) => response::page(page),
         Err(e) => {
-            error!("{}", e);
+            tracing::error!("{}", e);
             response::internal_server_error()
         }
     }
@@ -124,7 +123,7 @@ pub fn shares(shares: Vec<Share>, user_name: Option<String>) -> Response<Body> {
     match page.into_string() {
         Ok(page) => response::page(page),
         Err(e) => {
-            error!("{}", e);
+            tracing::error!("{}", e);
             response::internal_server_error()
         }
     }
@@ -170,7 +169,7 @@ pub fn login(message: Option<&str>) -> Response<Body> {
             response
         }
         Err(e) => {
-            error!("{}", e);
+            tracing::error!("{}", e);
             response::internal_server_error()
         }
     }
