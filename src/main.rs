@@ -110,23 +110,6 @@ struct LoginForm {
     pass: String,
 }
 
-impl LoginForm {
-    pub async fn from_body(body: Body) -> Result<Self, Error> {
-        let bytes = body::to_bytes(body).await?;
-
-        let mut user = String::new();
-        let mut pass = String::new();
-        for p in form_urlencoded::parse(&bytes) {
-            match p.0.as_ref() {
-                "user" => user = p.1.into_owned(),
-                "pass" => pass = p.1.into_owned(),
-                _ => {}
-            }
-        }
-        Ok(Self { user, pass })
-    }
-}
-
 struct RegisterForm {
     user: String,
     pass: String,
