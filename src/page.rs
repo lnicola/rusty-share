@@ -175,39 +175,3 @@ pub fn login(message: Option<&str>) -> Response<Body> {
         }
     }
 }
-
-pub fn register(message: Option<&str>) -> Response<Body> {
-    let page = html! {
-        : doctype::HTML;
-        html {
-            head {
-                meta(name="viewport", content="width=device-width, initial-scale=1");
-                title {
-                    : Raw("Register");
-                }
-                style { : Raw(include_str!("../assets/style.css")); }
-            }
-            body {
-                div(class="register-page") {
-                    form(method="POST", class="form") {
-                        input(type="text", name="user", placeholder="username", autofocus);
-                        input(type="password", name="pass", placeholder="password");
-                        input(type="password", name="confirm_pass", placeholder="confirm password");
-                        button { : Raw("Register") }
-                        @ if let Some(message) = message {
-                            p(class="message") { : message }
-                        }
-                    }
-                }
-
-           }
-        }
-    };
-    match page.into_string() {
-        Ok(page) => response::page(page),
-        Err(e) => {
-            error!("{}", e);
-            response::internal_server_error()
-        }
-    }
-}

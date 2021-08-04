@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use axum::extract::{Extension, Form, FromRequest, Query, RequestParts, UrlParams};
-use axum::handler::{any, get};
+use axum::handler::get;
 use axum::response::IntoResponse;
 use axum::routing::RoutingDsl;
 use axum::{route, AddExtensionLayer};
@@ -115,36 +115,6 @@ struct Redirect {
     redirect: String,
 }
 
-struct RegisterForm {
-    user: String,
-    pass: String,
-    confirm_pass: String,
-}
-
-impl RegisterForm {
-    pub async fn from_body(body: Body) -> Result<Self, Error> {
-        let bytes = body::to_bytes(body).await?;
-
-        let mut user = String::new();
-        let mut pass = String::new();
-        let mut confirm_pass = String::new();
-
-        for p in form_urlencoded::parse(&bytes) {
-            match p.0.as_ref() {
-                "user" => user = p.1.into_owned(),
-                "pass" => pass = p.1.into_owned(),
-                "confirm_pass" => confirm_pass = p.1.into_owned(),
-                _ => {}
-            }
-        }
-        Ok(Self {
-            user,
-            pass,
-            confirm_pass,
-        })
-    }
-}
-
 async fn files_from_body(body: Body) -> Result<Vec<PathBuf>, Error> {
     let bytes = body::to_bytes(body).await?;
     let files = form_urlencoded::parse(&bytes)
@@ -233,34 +203,6 @@ impl RustyShare {
             &login_form.pass,
         )
         .await
-    }
-
-    async fn register(&self, request: Request<Body>) -> Result<Response, Error> {
-        let response = if let Some(store) = self.store.as_ref() {
-            let method = request.method().clone();
-            let form = RegisterForm::from_body(request.into_body()).await?;
-            if form.pass != form.confirm_pass {
-                page::register(Some("Registration failed: passwords don't match."))
-            } else {
-                match store.users_exist() {
-                    Ok(true) => response::not_found(),
-                    Ok(false) => {
-                        if method == Method::GET {
-                            page::register(None)
-                        } else {
-                            Self::register_action(store, form.user, &form.pass)
-                        }
-                    }
-                    Err(e) => {
-                        error!("{}", e);
-                        response::internal_server_error()
-                    }
-                }
-            }
-        } else {
-            response::not_found()
-        };
-        Ok(response)
     }
 
     async fn browse_or_archive(
@@ -385,13 +327,6 @@ impl RustyShare {
             response::not_found()
         };
         Ok(response)
-    }
-
-    fn register_action(store: &SqliteStore, user: String, pass: &str) -> Response {
-        match register_user(store, user, pass) {
-            Ok(_) => response::register_ok("/login"),
-            Err(_) => page::register(Some("Registration failed.")),
-        }
     }
 
     async fn browse_shares(&self, authentication: Authentication) -> Result<Response, Error> {
@@ -536,10 +471,6 @@ async fn index(state: Extension<Arc<RustyShare>>) -> impl IntoResponse {
     state.index().await.unwrap()
 }
 
-async fn register(state: Extension<Arc<RustyShare>>, req: Request<Body>) -> impl IntoResponse {
-    state.register(req).await.unwrap()
-}
-
 async fn login_page(state: Extension<Arc<RustyShare>>) -> impl IntoResponse {
     state.login_page().await.unwrap()
 }
@@ -654,7 +585,6 @@ async fn run() -> Result<(), Error> {
             let state = Arc::clone(&rusty_share);
 
             let app = route("/", get(index))
-                .route("/register", any(register))
                 .route("/login", get(login_page).post(login_post))
                 .route("/favicon.ico", get(favicon))
                 .route(
