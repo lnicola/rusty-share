@@ -4,6 +4,9 @@ use std::io;
 use std::net::AddrParseError;
 use std::path::{PathBuf, StripPrefixError};
 
+use axum::response::IntoResponse;
+use http::{Response, StatusCode};
+use hyper::Body;
 use scrypt::password_hash;
 
 #[derive(Debug)]
@@ -139,3 +142,12 @@ impl Display for Error {
 }
 
 impl error::Error for Error {}
+
+impl IntoResponse for Error {
+    fn into_response(self) -> Response<Body> {
+        Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body(Body::empty())
+            .unwrap()
+    }
+}

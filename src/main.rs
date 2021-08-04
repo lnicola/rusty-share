@@ -463,11 +463,11 @@ fn get_store(path: &Path) -> SqliteStore {
 }
 
 async fn index(state: Extension<Arc<RustyShare>>) -> impl IntoResponse {
-    state.index().await.unwrap()
+    state.index().await
 }
 
 async fn login_page(state: Extension<Arc<RustyShare>>) -> impl IntoResponse {
-    state.login_page().await.unwrap()
+    state.login_page().await
 }
 
 async fn login_post(
@@ -475,18 +475,17 @@ async fn login_post(
     redirect: Option<Query<Redirect>>,
     login_form: Form<LoginForm>,
 ) -> impl IntoResponse {
-    let response = RustyShare::login_action(
+    RustyShare::login_action(
         state.store.as_ref(),
         redirect.map(|r| r.0.redirect),
         &login_form.user,
         &login_form.pass,
     )
-    .await;
-    response.unwrap()
+    .await
 }
 
 async fn favicon(state: Extension<Arc<RustyShare>>) -> impl IntoResponse {
-    state.favicon().await.unwrap()
+    state.favicon().await
 }
 
 async fn share_browse(
@@ -496,10 +495,7 @@ async fn share_browse(
     state: Extension<Arc<RustyShare>>,
     req: Request<Body>,
 ) -> impl IntoResponse {
-    state
-        .browse_(&share, local_path, authentication, req)
-        .await
-        .unwrap()
+    state.browse_(&share, local_path, authentication, req).await
 }
 
 async fn share_archive(
@@ -512,7 +508,6 @@ async fn share_archive(
     state
         .archive_(&share, local_path, files, authentication)
         .await
-        .unwrap()
 }
 
 async fn share_redirect(
