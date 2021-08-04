@@ -33,8 +33,9 @@ pub enum Error {
     Rusqlite {
         cause: rusqlite::Error,
     },
-    StreamCancelled,
-    InvalidArgument,
+    Horrorshow {
+        cause: horrorshow::Error,
+    },
     Hyper {
         cause: hyper::Error,
     },
@@ -47,6 +48,9 @@ pub enum Error {
     Hash {
         cause: password_hash::Error,
     },
+    StreamCancelled,
+    InvalidArgument,
+    ShareNotFound,
 }
 
 impl Error {
@@ -85,6 +89,12 @@ impl From<walkdir::Error> for Error {
 impl From<rusqlite::Error> for Error {
     fn from(cause: rusqlite::Error) -> Self {
         Error::Rusqlite { cause }
+    }
+}
+
+impl From<horrorshow::Error> for Error {
+    fn from(cause: horrorshow::Error) -> Self {
+        Self::Horrorshow { cause }
     }
 }
 
@@ -131,12 +141,14 @@ impl Display for Error {
             ),
             Error::AddrParse { cause, addr } => write!(f, "{} for address {}", cause, addr),
             Error::Rusqlite { cause } => cause.fmt(f),
+            Error::Horrorshow { cause } => cause.fmt(f),
             Error::Hyper { cause } => cause.fmt(f),
             Error::R2d2 { cause } => cause.fmt(f),
             Error::Rand { cause } => cause.fmt(f),
             Error::Hash { cause } => cause.fmt(f),
             Error::StreamCancelled => write!(f, "the archiving stream was cancelled unexpectedly"),
             Error::InvalidArgument => write!(f, "invalid argument"),
+            Error::ShareNotFound => write!(f, "share not found"),
         }
     }
 }
@@ -145,9 +157,15 @@ impl error::Error for Error {}
 
 impl IntoResponse for Error {
     fn into_response(self) -> Response<Body> {
-        Response::builder()
-            .status(StatusCode::INTERNAL_SERVER_ERROR)
-            .body(Body::empty())
-            .unwrap()
+        match self {
+            Error::ShareNotFound => Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(Body::empty())
+                .unwrap(),
+            _ => Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(Body::empty())
+                .unwrap(),
+        }
     }
 }

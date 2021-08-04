@@ -125,12 +125,12 @@ impl RustyShare {
         store: &Option<SqliteStore>,
         name: &str,
         user_id: Option<i32>,
-    ) -> Result<Option<Share>, Response> {
+    ) -> Result<Option<Share>, Error> {
         task::block_in_place(move || {
             if let Some(store) = store {
                 let path = store.lookup_share(name, user_id).map_err(|e| {
                     tracing::error!("{}", e);
-                    response::internal_server_error()
+                    e
                 })?;
                 Ok(path)
             } else if name == "public" {
@@ -142,7 +142,7 @@ impl RustyShare {
                     upload_allowed: false,
                 }))
             } else {
-                Err(response::not_found())
+                Err(Error::ShareNotFound)
             }
         })
     }
@@ -150,12 +150,12 @@ impl RustyShare {
     async fn get_shares(
         store: &Option<SqliteStore>,
         user_id: Option<i32>,
-    ) -> Result<Vec<Share>, Response> {
+    ) -> Result<Vec<Share>, Error> {
         if let Some(store) = store {
             task::block_in_place(move || {
                 let shares = store.get_accessible_shares(user_id).map_err(|e| {
                     tracing::error!("{}", e);
-                    response::internal_server_error()
+                    e
                 })?;
                 Ok(shares)
             })
@@ -197,11 +197,10 @@ impl RustyShare {
             }
         };
 
-        let r = Self::lookup_share(&self.root, &self.store, share, user_id).await;
+        let r = Self::lookup_share(&self.root, &self.store, share, user_id).await?;
         match r {
-            Ok(Some(share)) => RustyShare::browse(share, local_path, request, user_name).await,
-            Ok(None) => Ok(response::login_redirect(request.uri(), false)),
-            Err(res) => Ok(res),
+            Some(share) => RustyShare::browse(share, local_path, request, user_name).await,
+            None => Ok(response::login_redirect(request.uri(), false)),
         }
     }
 
@@ -223,9 +222,9 @@ impl RustyShare {
             }
         };
 
-        let r = Self::lookup_share(&self.root, &self.store, share, user_id).await;
+        let r = Self::lookup_share(&self.root, &self.store, share, user_id).await?;
         match r {
-            Ok(Some(share)) => {
+            Some(share) => {
                 let files = files
                     .0
                     .s
@@ -235,13 +234,12 @@ impl RustyShare {
                     .collect::<Vec<_>>();
                 RustyShare::archive(share.path, local_path, files).await
             }
-            Ok(None) => Ok(response::login_redirect(
+            None => Ok(response::login_redirect(
                 &format!("/browse/{}/{}", share, local_path.display())
                     .parse()
                     .unwrap(),
                 false,
             )),
-            Err(res) => Ok(res),
         }
     }
 
@@ -263,31 +261,32 @@ impl RustyShare {
             }
         };
 
-        let r = Self::lookup_share(&self.root, &self.store, share, user_id).await;
-        match r {
-            Ok(Some(share)) if share.upload_allowed => {
-                match RustyShare::do_upload(&share.path.join(&local_path), body_stream).await {
-                    Ok(_) => Ok(response::no_content()),
-                    Err(e) => {
+        match Self::lookup_share(&self.root, &self.store, share, user_id).await? {
+            Some(share) if share.upload_allowed => {
+                RustyShare::do_upload(&share.path.join(&local_path), body_stream)
+                    .await
+                    .map_err(|e| {
                         tracing::error!("{}", e);
-                        Ok(response::internal_server_error())
-                    }
-                }
+                        e
+                    })?;
+                Ok(response::no_content())
             }
-            Ok(None) => Ok(response::login_redirect(
+            None => Ok(response::login_redirect(
                 &format!("/browse/{}/{}", share, local_path.display())
                     .parse()
                     .unwrap(),
                 false,
             )),
-            Ok(_) => Ok(response::forbidden()),
-            Err(res) => Ok(res),
+            _ => Ok(response::forbidden()),
         }
     }
 
     async fn login_page(&self) -> Result<Response, Error> {
         if self.store.is_some() {
-            Ok(page::login(None))
+            Ok(page::login(None).map_err(|e| {
+                tracing::error!("{}", e);
+                e
+            })?)
         } else {
             Ok(response::not_found())
         }
@@ -310,6 +309,10 @@ impl RustyShare {
                 page::login(Some(
                     "Login failed. Please contact the site owner to reset your password.",
                 ))
+                .map_err(|e| {
+                    tracing::error!("{}", e);
+                    e
+                })?
             }
         } else {
             response::not_found()
@@ -321,19 +324,19 @@ impl RustyShare {
         let response = match authentication {
             Authentication::User(user_id, name) => {
                 tracing::info!("{} GET /browse/", name);
-                let r = Self::get_shares(&self.store, Some(user_id)).await;
-                match r {
-                    Ok(shares) => page::shares(shares, Some(name)),
-                    Err(response) => response,
-                }
+                let shares = Self::get_shares(&self.store, Some(user_id)).await?;
+                page::shares(shares, Some(name)).map_err(|e| {
+                    tracing::error!("{}", e);
+                    e
+                })?
             }
             Authentication::Error(_) => {
                 tracing::info!("anonymous GET /browse/");
-                let r = Self::get_shares(&self.store, None).await;
-                match r {
-                    Ok(shares) => page::shares(shares, None),
-                    Err(response) => response,
-                }
+                let shares = Self::get_shares(&self.store, None).await?;
+                page::shares(shares, None).map_err(|e| {
+                    tracing::error!("{}", e);
+                    e
+                })?
             }
         };
         Ok(response)
@@ -363,7 +366,7 @@ impl RustyShare {
                                 share.upload_allowed,
                                 user_name,
                             )
-                        })
+                        })?
                     }
                 } else {
                     let mut headers = HeaderMap::new();
@@ -730,32 +733,32 @@ fn render_index(
     path: &Path,
     upload_allowed: bool,
     user_name: Option<String>,
-) -> Response {
+) -> Result<Response, Error> {
     let enumerate_start = Instant::now();
-    match get_dir_entries(path) {
-        Ok(entries) => {
-            let render_start = Instant::now();
-            let enumerate_time = render_start - enumerate_start;
-            let rendered = page::index(
-                share_name,
-                relative_path,
-                &entries,
-                upload_allowed,
-                user_name,
-            );
-            let render_time = Instant::now() - render_start;
-            tracing::info!(
-                "enumerate: {} ms, render: {} ms",
-                enumerate_time.as_millis(),
-                render_time.as_millis()
-            );
-            rendered
-        }
-        Err(e) => {
-            tracing::error!("{}", e);
-            response::internal_server_error()
-        }
-    }
+    let entries = get_dir_entries(path).map_err(|e| {
+        tracing::error!("{}", e);
+        e
+    })?;
+    let render_start = Instant::now();
+    let enumerate_time = render_start - enumerate_start;
+    let rendered = page::index(
+        share_name,
+        relative_path,
+        &entries,
+        upload_allowed,
+        user_name,
+    )
+    .map_err(|e| {
+        tracing::error!("{}", e);
+        e
+    })?;
+    let render_time = Instant::now() - render_start;
+    tracing::info!(
+        "enumerate: {} ms, render: {} ms",
+        enumerate_time.as_millis(),
+        render_time.as_millis()
+    );
+    Ok(rendered)
 }
 
 pub fn register_user(store: &SqliteStore, name: String, password: &str) -> Result<User, Error> {

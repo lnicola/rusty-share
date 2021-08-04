@@ -1,4 +1,5 @@
 use crate::db::models::Share;
+use crate::error::Error;
 use crate::response;
 use crate::share_entry::ShareEntry;
 use horrorshow::helper::doctype;
@@ -14,7 +15,7 @@ pub fn index(
     entries: &[ShareEntry],
     upload_allowed: bool,
     user_name: Option<String>,
-) -> Response<Body> {
+) -> Result<Response<Body>, Error> {
     let page = html! {
         : doctype::HTML;
         html {
@@ -76,16 +77,11 @@ pub fn index(
             }
         }
     };
-    match page.into_string() {
-        Ok(page) => response::page(page),
-        Err(e) => {
-            tracing::error!("{}", e);
-            response::internal_server_error()
-        }
-    }
+    let page = page.into_string()?;
+    Ok(response::page(page))
 }
 
-pub fn shares(shares: Vec<Share>, user_name: Option<String>) -> Response<Body> {
+pub fn shares(shares: Vec<Share>, user_name: Option<String>) -> Result<Response<Body>, Error> {
     let page = html! {
         : doctype::HTML;
         html {
@@ -120,16 +116,11 @@ pub fn shares(shares: Vec<Share>, user_name: Option<String>) -> Response<Body> {
             }
         }
     };
-    match page.into_string() {
-        Ok(page) => response::page(page),
-        Err(e) => {
-            tracing::error!("{}", e);
-            response::internal_server_error()
-        }
-    }
+    let page = page.into_string()?;
+    Ok(response::page(page))
 }
 
-pub fn login(message: Option<&str>) -> Response<Body> {
+pub fn login(message: Option<&str>) -> Result<Response<Body>, Error> {
     let page = html! {
         : doctype::HTML;
         html {
@@ -155,22 +146,15 @@ pub fn login(message: Option<&str>) -> Response<Body> {
            }
         }
     };
-    match page.into_string() {
-        Ok(page) => {
-            let mut response = response::page(page);
-            if message.is_some() {
-                let cookie = "sid=; HttpOnly; SameSite=Lax; Max-Age=0";
-                response.headers_mut().insert(
-                    SET_COOKIE,
-                    // HeaderValue::from_str(&Cookie::named("sid").to_string()).unwrap(),
-                    HeaderValue::from_static(cookie),
-                );
-            }
-            response
-        }
-        Err(e) => {
-            tracing::error!("{}", e);
-            response::internal_server_error()
-        }
+    let page = page.into_string()?;
+    let mut response = response::page(page);
+    if message.is_some() {
+        let cookie = "sid=; HttpOnly; SameSite=Lax; Max-Age=0";
+        response.headers_mut().insert(
+            SET_COOKIE,
+            // HeaderValue::from_str(&Cookie::named("sid").to_string()).unwrap(),
+            HeaderValue::from_static(cookie),
+        );
     }
+    Ok(response)
 }
