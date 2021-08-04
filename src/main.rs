@@ -178,7 +178,7 @@ impl RustyShare {
         Ok(response::not_found())
     }
 
-    async fn browse_or_archive(
+    async fn browse_(
         &self,
         share: &str,
         local_path: PathBuf,
@@ -231,8 +231,7 @@ impl RustyShare {
                     .s
                     .into_iter()
                     .filter(|p| p.0 == "s")
-                    .map(|p| p.1)
-                    .map(|f| PathBuf::from(f))
+                    .map(|(_, f)| PathBuf::from(f))
                     .collect::<Vec<_>>();
                 RustyShare::archive(share.path, local_path, files).await
             }
@@ -498,7 +497,7 @@ async fn share_browse(
     req: Request<Body>,
 ) -> impl IntoResponse {
     state
-        .browse_or_archive(&share, local_path, authentication, req)
+        .browse_(&share, local_path, authentication, req)
         .await
         .unwrap()
 }
