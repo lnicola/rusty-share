@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use axum::extract::{Extension, FromRequest, RequestParts, UrlParams};
+use axum::extract::{Extension, Form, FromRequest, RawQuery, RequestParts, UrlParams};
 use axum::handler::{any, get};
 use axum::response::IntoResponse;
 use axum::routing::RoutingDsl;
@@ -16,6 +16,7 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
 use scrypt::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use scrypt::Scrypt;
+use serde::Deserialize;
 use std::borrow::Cow;
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry};
@@ -103,6 +104,7 @@ fn get_archive_name(path_: &Path, files: &[PathBuf], single_dir: bool) -> String
     }
 }
 
+#[derive(Deserialize)]
 struct LoginForm {
     user: String,
     pass: String,
@@ -231,8 +233,8 @@ impl RustyShare {
         Ok(response::not_found())
     }
 
-    async fn login(&self, request: Request<Body>) -> Result<Response, Error> {
-        let redirect = form_urlencoded::parse(request.uri().query().unwrap_or("").as_bytes())
+    async fn login(&self, login_form: &LoginForm, query: &RawQuery) -> Result<Response, Error> {
+        let redirect = form_urlencoded::parse(query.0.as_deref().unwrap_or("").as_bytes())
             .filter_map(|p| {
                 if p.0 == "redirect" {
                     Some(p.1.into_owned())
@@ -241,8 +243,13 @@ impl RustyShare {
                 }
             })
             .next();
-        let form = LoginForm::from_body(request.into_body()).await?;
-        Self::login_action(self.store.as_ref(), redirect, &form.user, &form.pass).await
+        Self::login_action(
+            self.store.as_ref(),
+            redirect,
+            &login_form.user,
+            &login_form.pass,
+        )
+        .await
     }
 
     async fn register(&self, request: Request<Body>) -> Result<Response, Error> {
@@ -554,8 +561,12 @@ async fn login_page(state: Extension<Arc<RustyShare>>) -> impl IntoResponse {
     state.login_page().await.unwrap()
 }
 
-async fn login_post(state: Extension<Arc<RustyShare>>, req: Request<Body>) -> impl IntoResponse {
-    state.login(req).await.unwrap()
+async fn login_post(
+    state: Extension<Arc<RustyShare>>,
+    query: RawQuery,
+    login_form: Form<LoginForm>,
+) -> impl IntoResponse {
+    state.login(&login_form, &query).await.unwrap()
 }
 
 async fn favicon(state: Extension<Arc<RustyShare>>) -> impl IntoResponse {
@@ -661,8 +672,7 @@ async fn run() -> Result<(), Error> {
 
             let app = route("/", get(index))
                 .route("/register", any(register))
-                .route("/login", get(login_page))
-                .route("/login", get(login_post))
+                .route("/login", get(login_page).post(login_post))
                 .route("/favicon.ico", get(favicon))
                 .route(
                     "/browse/:share",

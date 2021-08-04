@@ -52,6 +52,7 @@ walkdir = "2.3"
 tracing-subscriber = "0.2.19"
 tower-http = { version = "0.1", features = ["trace"] }
 async-trait = "0.1.51"
+serde = { version = "1.0", features = ["derive"] }
 
 [features]
 default = ["bundled-windows"]
