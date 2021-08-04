@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use axum::extract::{Extension, Form, FromRequest, RawQuery, RequestParts, UrlParams};
+use axum::extract::{Extension, Form, FromRequest, Query, RequestParts, UrlParams};
 use axum::handler::{any, get};
 use axum::response::IntoResponse;
 use axum::routing::RoutingDsl;
@@ -110,6 +110,11 @@ struct LoginForm {
     pass: String,
 }
 
+#[derive(Deserialize)]
+struct Redirect {
+    redirect: String,
+}
+
 struct RegisterForm {
     user: String,
     pass: String,
@@ -216,19 +221,14 @@ impl RustyShare {
         Ok(response::not_found())
     }
 
-    async fn login(&self, login_form: &LoginForm, query: &RawQuery) -> Result<Response, Error> {
-        let redirect = form_urlencoded::parse(query.0.as_deref().unwrap_or("").as_bytes())
-            .filter_map(|p| {
-                if p.0 == "redirect" {
-                    Some(p.1.into_owned())
-                } else {
-                    None
-                }
-            })
-            .next();
+    async fn login(
+        &self,
+        login_form: &LoginForm,
+        redirect: Option<Query<Redirect>>,
+    ) -> Result<Response, Error> {
         Self::login_action(
             self.store.as_ref(),
-            redirect,
+            redirect.map(|r| r.0.redirect),
             &login_form.user,
             &login_form.pass,
         )
@@ -546,10 +546,10 @@ async fn login_page(state: Extension<Arc<RustyShare>>) -> impl IntoResponse {
 
 async fn login_post(
     state: Extension<Arc<RustyShare>>,
-    query: RawQuery,
+    redirect: Option<Query<Redirect>>,
     login_form: Form<LoginForm>,
 ) -> impl IntoResponse {
-    state.login(&login_form, &query).await.unwrap()
+    state.login(&login_form, redirect).await.unwrap()
 }
 
 async fn favicon(state: Extension<Arc<RustyShare>>) -> impl IntoResponse {
