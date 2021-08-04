@@ -15,7 +15,6 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
 use scrypt::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use scrypt::Scrypt;
-use serde::Deserialize;
 use std::borrow::Cow;
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry};
@@ -37,6 +36,7 @@ use authentication::Authentication;
 use db::models::{AccessLevel, NewUser, Share, User};
 use db::SqliteStore;
 use error::Error;
+use forms::{Files, LoginForm, Redirect};
 use options::{Args, Command};
 use pipe::Pipe;
 use share_entry::ShareEntry;
@@ -45,6 +45,7 @@ mod archive;
 mod authentication;
 mod db;
 mod error;
+mod forms;
 mod options;
 mod page;
 mod pipe;
@@ -100,23 +101,6 @@ fn get_archive_name(path_: &Path, files: &[PathBuf], single_dir: bool) -> String
             .map(|f| f.to_string_lossy().into_owned() + ".tar")
             .unwrap_or_else(|| String::from("archive.tar"))
     }
-}
-
-#[derive(Deserialize)]
-struct LoginForm {
-    user: String,
-    pass: String,
-}
-
-#[derive(Deserialize)]
-struct Redirect {
-    redirect: String,
-}
-
-#[derive(Deserialize)]
-#[serde(transparent)]
-struct Files {
-    s: Vec<(String, String)>,
 }
 
 impl RustyShare {
