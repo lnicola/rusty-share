@@ -19,13 +19,13 @@ use serde::Deserialize;
 use std::borrow::Cow;
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry};
-use std::io::Write;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Component, Path, PathBuf};
 use std::str;
 use std::sync::Arc;
 use std::time::Instant;
 use tar::Builder;
+use tokio::io::AsyncWriteExt;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 use tokio::task;
@@ -385,15 +385,14 @@ impl RustyShare {
     }
 
     async fn do_upload(path: &Path, mut body_stream: BodyStream) -> Result<(), Error> {
-        let mut file = tokio::task::block_in_place(|| {
-            std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(path)
-        })?;
+        let mut file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .await?;
         while let Some(bytes) = body_stream.next().await {
             let bytes = bytes?;
-            tokio::task::block_in_place(|| file.write_all(&bytes))?;
+            file.write_all(&bytes).await?;
         }
         Ok(())
     }
