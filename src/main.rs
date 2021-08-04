@@ -6,9 +6,9 @@ use axum::routing::RoutingDsl;
 use axum::{route, AddExtensionLayer};
 use futures_util::stream::StreamExt;
 use http::header::CONTENT_TYPE;
-use http::{HeaderMap, HeaderValue, Method, Request};
+use http::{HeaderMap, HeaderValue, Request};
 use http_serve::{self, ChunkedReadFile};
-use hyper::{body, Body, Server};
+use hyper::{Body, Server};
 use os_str_bytes::{OsStrBytes, OsStringBytes};
 use rand_core::{OsRng, RngCore};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -30,7 +30,6 @@ use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 use tokio::task;
 use tower_http::trace::TraceLayer;
-use url::form_urlencoded;
 use walkdir::WalkDir;
 
 use archive::Archive;
@@ -114,21 +113,10 @@ struct Redirect {
     redirect: String,
 }
 
-async fn files_from_body(body: Body) -> Result<Vec<PathBuf>, Error> {
-    let bytes = body::to_bytes(body).await?;
-    let files = form_urlencoded::parse(&bytes)
-        .filter_map(|p| {
-            if p.0 == "s" {
-                let percent_decoded = Cow::from(percent_encoding::percent_decode_str(&p.1));
-                PathBuf::from_raw_vec(percent_decoded.into_owned())
-                    .map_err(|e| tracing::error!("cannot decode {}: {}", p.1, e))
-                    .ok()
-            } else {
-                None
-            }
-        })
-        .collect();
-    Ok(files)
+#[derive(Deserialize)]
+#[serde(transparent)]
+struct Files {
+    s: Vec<(String, String)>,
 }
 
 impl RustyShare {
@@ -197,41 +185,63 @@ impl RustyShare {
         authentication: Authentication,
         request: Request<Body>,
     ) -> Result<Response, Error> {
+        tracing::info!("{}", request.uri());
         let (user_id, user_name) = match authentication {
             Authentication::User(user_id, name) => {
-                tracing::info!(
-                    "{} {} /browse/{}/{}",
-                    name,
-                    request.method(),
-                    share,
-                    local_path.display()
-                );
+                tracing::info!("{} /browse/{}/{}", name, share, local_path.display());
                 (Some(user_id), Some(name))
             }
             Authentication::Error(_) => {
-                tracing::info!(
-                    "anonymous {} /browse/{}/{}",
-                    request.method(),
-                    share,
-                    local_path.display()
-                );
+                tracing::info!("anonymous /browse/{}/{}", share, local_path.display());
                 (None, None)
             }
         };
 
         let r = Self::lookup_share(&self.root, &self.store, share, user_id).await;
         match r {
-            Ok(Some(share)) => {
-                if request.method() == Method::GET || request.method() == Method::HEAD {
-                    RustyShare::browse(share, local_path, request, user_name).await
-                } else if request.method() == Method::POST {
-                    let files = files_from_body(request.into_body()).await?;
-                    RustyShare::archive(share.path, local_path, files).await
-                } else {
-                    Ok(response::method_not_allowed())
-                }
-            }
+            Ok(Some(share)) => RustyShare::browse(share, local_path, request, user_name).await,
             Ok(None) => Ok(response::login_redirect(request.uri(), false)),
+            Err(res) => Ok(res),
+        }
+    }
+
+    async fn archive_(
+        &self,
+        share: &str,
+        local_path: PathBuf,
+        files: Form<Files>,
+        authentication: Authentication,
+    ) -> Result<Response, Error> {
+        let user_id = match authentication {
+            Authentication::User(user_id, name) => {
+                tracing::info!("{} /browse/{}/{}", name, share, local_path.display());
+                Some(user_id)
+            }
+            Authentication::Error(_) => {
+                tracing::info!("anonymous /browse/{}/{}", share, local_path.display());
+                None
+            }
+        };
+
+        let r = Self::lookup_share(&self.root, &self.store, share, user_id).await;
+        match r {
+            Ok(Some(share)) => {
+                let files = files
+                    .0
+                    .s
+                    .into_iter()
+                    .filter(|p| p.0 == "s")
+                    .map(|p| p.1)
+                    .map(|f| PathBuf::from(f))
+                    .collect::<Vec<_>>();
+                RustyShare::archive(share.path, local_path, files).await
+            }
+            Ok(None) => Ok(response::login_redirect(
+                &format!("/browse/{}/{}", share, local_path.display())
+                    .parse()
+                    .unwrap(),
+                false,
+            )),
             Err(res) => Ok(res),
         }
     }
@@ -480,7 +490,7 @@ async fn favicon(state: Extension<Arc<RustyShare>>) -> impl IntoResponse {
     state.favicon().await.unwrap()
 }
 
-async fn share(
+async fn share_browse(
     UrlParams((share,)): UrlParams<(String,)>,
     LocalPath(local_path): LocalPath,
     authentication: Authentication,
@@ -489,6 +499,19 @@ async fn share(
 ) -> impl IntoResponse {
     state
         .browse_or_archive(&share, local_path, authentication, req)
+        .await
+        .unwrap()
+}
+
+async fn share_archive(
+    UrlParams((share,)): UrlParams<(String,)>,
+    LocalPath(local_path): LocalPath,
+    files: Form<Files>,
+    authentication: Authentication,
+    state: Extension<Arc<RustyShare>>,
+) -> impl IntoResponse {
+    state
+        .archive_(&share, local_path, files, authentication)
         .await
         .unwrap()
 }
@@ -586,7 +609,10 @@ async fn run() -> Result<(), Error> {
                 )
                 .nest(
                     "/browse/:share/",
-                    get(share).head(share).post(share).put(upload),
+                    get(share_browse)
+                        .head(share_browse)
+                        .post(share_archive)
+                        .put(upload),
                 )
                 .layer(AddExtensionLayer::new(state))
                 .layer(TraceLayer::new_for_http());
