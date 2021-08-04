@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use axum::extract::{Extension, Form, FromRequest, Query, RequestParts, UrlParams};
+use axum::extract::{BodyStream, Extension, Form, FromRequest, Query, RequestParts, UrlParams};
 use axum::handler::get;
 use axum::response::IntoResponse;
 use axum::routing::RoutingDsl;
@@ -250,26 +250,15 @@ impl RustyShare {
         share: &str,
         local_path: &Path,
         authentication: Authentication,
-        request: Request<Body>,
+        body_stream: BodyStream,
     ) -> Result<Response, Error> {
         let (user_id, _) = match authentication {
             Authentication::User(user_id, name) => {
-                tracing::info!(
-                    "{} {} /browse/{}/{}",
-                    name,
-                    request.method(),
-                    share,
-                    local_path.display()
-                );
+                tracing::info!("{} /browse/{}/{}", name, share, local_path.display());
                 (Some(user_id), Some(name))
             }
             Authentication::Error(_) => {
-                tracing::info!(
-                    "anonymous {} /browse/{}/{}",
-                    request.method(),
-                    share,
-                    local_path.display()
-                );
+                tracing::info!("anonymous /browse/{}/{}", share, local_path.display());
                 (None, None)
             }
         };
@@ -277,7 +266,7 @@ impl RustyShare {
         let r = Self::lookup_share(&self.root, &self.store, share, user_id).await;
         match r {
             Ok(Some(share)) if share.upload_allowed => {
-                match RustyShare::do_upload(&share.path.join(&local_path), request).await {
+                match RustyShare::do_upload(&share.path.join(&local_path), body_stream).await {
                     Ok(_) => Ok(response::no_content()),
                     Err(e) => {
                         tracing::error!("{}", e);
@@ -285,7 +274,12 @@ impl RustyShare {
                     }
                 }
             }
-            Ok(None) => Ok(response::login_redirect(request.uri(), false)),
+            Ok(None) => Ok(response::login_redirect(
+                &format!("/browse/{}/{}", share, local_path.display())
+                    .parse()
+                    .unwrap(),
+                false,
+            )),
             Ok(_) => Ok(response::forbidden()),
             Err(res) => Ok(res),
         }
@@ -390,15 +384,14 @@ impl RustyShare {
         Ok(response)
     }
 
-    async fn do_upload(path: &Path, request: Request<Body>) -> Result<(), Error> {
+    async fn do_upload(path: &Path, mut body_stream: BodyStream) -> Result<(), Error> {
         let mut file = tokio::task::block_in_place(|| {
             std::fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
                 .open(path)
         })?;
-        let mut body = request.into_body();
-        while let Some(bytes) = body.next().await {
+        while let Some(bytes) = body_stream.next().await {
             let bytes = bytes?;
             tokio::task::block_in_place(|| file.write_all(&bytes))?;
         }
@@ -527,10 +520,10 @@ async fn upload(
     LocalPath(local_path): LocalPath,
     authentication: Authentication,
     state: Extension<Arc<RustyShare>>,
-    req: Request<Body>,
+    body_stream: BodyStream,
 ) -> impl IntoResponse {
     state
-        .upload(&share, &local_path, authentication, req)
+        .upload(&share, &local_path, authentication, body_stream)
         .await
         .unwrap()
 }
