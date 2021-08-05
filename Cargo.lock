@@ -78,7 +78,7 @@ checksum = "cdb031dd78e28731d87d56cc8ffef4a8f36ca26c38fe2de700543e627f8a464a"
 [[package]]
 name = "axum"
 version = "0.1.2"
-source = "git+https://github.com/tokio-rs/axum#6a078ddb719e9a8fac72b5b69c0fce72fb7994a8"
+source = "git+https://github.com/tokio-rs/axum#f18e423fb0a90366a4edc948e237e299c72d6d7d"
 dependencies = [
  "async-trait",
  "bytes",
@@ -86,7 +86,7 @@ dependencies = [
  "http",
  "http-body",
  "hyper",
- "pin-project",
+ "pin-project-lite",
  "regex",
  "serde",
  "serde_json",
