@@ -28,7 +28,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 use tokio::task;
-use tower_http::trace::TraceLayer;
+use tower_http::trace::{DefaultOnResponse, TraceLayer};
+use tracing::Level;
 use walkdir::WalkDir;
 
 use archive::Archive;
@@ -515,6 +516,9 @@ async fn upload(
 }
 
 async fn run() -> Result<(), Error> {
+    if std::env::var("RUST_LOG").is_err() {
+        std::env::set_var("RUST_LOG", "rusty_share=info,tower_http=info")
+    }
     tracing_subscriber::fmt::init();
 
     let args = Args::parse().unwrap();
@@ -565,7 +569,7 @@ async fn run() -> Result<(), Error> {
                     .map_err(|e| Error::from_addr_parse(e, address.clone()))?,
                 port,
             );
-            println!("Listening on http://{}", addr);
+            tracing::info!("Listening on http://{}", addr);
 
             let store = db_path.as_ref().map(|db_path| get_store(db_path));
             let rusty_share = RustyShare { root, store };
@@ -588,7 +592,10 @@ async fn run() -> Result<(), Error> {
                         .put(upload),
                 )
                 .layer(AddExtensionLayer::new(state))
-                .layer(TraceLayer::new_for_http());
+                .layer(
+                    TraceLayer::new_for_http()
+                        .on_response(DefaultOnResponse::new().level(Level::INFO)),
+                );
 
             let listener = std::net::TcpListener::bind(&addr)?;
 
