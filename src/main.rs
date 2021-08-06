@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use axum::extract::{BodyStream, Extension, Form, FromRequest, Query, RequestParts, UrlParams};
+use axum::extract::{self, BodyStream, Extension, Form, FromRequest, Query, RequestParts};
 use axum::handler::get;
 use axum::response::IntoResponse;
 use axum::routing::RoutingDsl;
@@ -469,7 +469,7 @@ async fn favicon(state: Extension<Arc<RustyShare>>) -> impl IntoResponse {
 }
 
 async fn share_browse(
-    UrlParams((share,)): UrlParams<(String,)>,
+    extract::Path(share): extract::Path<String>,
     LocalPath(local_path): LocalPath,
     authentication: Authentication,
     state: Extension<Arc<RustyShare>>,
@@ -479,7 +479,7 @@ async fn share_browse(
 }
 
 async fn share_archive(
-    UrlParams((share,)): UrlParams<(String,)>,
+    extract::Path(share): extract::Path<String>,
     LocalPath(local_path): LocalPath,
     files: Form<Files>,
     authentication: Authentication,
@@ -491,7 +491,7 @@ async fn share_archive(
 }
 
 async fn share_redirect(
-    UrlParams((share,)): UrlParams<(String,)>,
+    extract::Path(share): extract::Path<String>,
     authentication: Authentication,
     state: Extension<Arc<RustyShare>>,
 ) -> impl IntoResponse {
@@ -503,7 +503,7 @@ async fn share_redirect(
 }
 
 async fn upload(
-    UrlParams((share,)): UrlParams<(String,)>,
+    extract::Path(share): extract::Path<String>,
     LocalPath(local_path): LocalPath,
     authentication: Authentication,
     state: Extension<Arc<RustyShare>>,
