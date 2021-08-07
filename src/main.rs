@@ -645,6 +645,9 @@ struct LocalPath(PathBuf);
 struct PathTraversalAttempt;
 
 impl IntoResponse for PathTraversalAttempt {
+    type Body = hyper::Body;
+    type BodyError = <Self::Body as http_body::Body>::Error;
+
     fn into_response(self) -> http::Response<Body> {
         response::bad_request()
     }

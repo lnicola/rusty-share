@@ -77,8 +77,8 @@ checksum = "cdb031dd78e28731d87d56cc8ffef4a8f36ca26c38fe2de700543e627f8a464a"
 
 [[package]]
 name = "axum"
-version = "0.1.2"
-source = "git+https://github.com/tokio-rs/axum#811b1d896caefdc2698f4db166bde234015aab81"
+version = "0.1.3"
+source = "git+https://github.com/tokio-rs/axum#ab927033b301d618fb97cb510f45fc00a95e176a"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1039,6 +1039,7 @@ dependencies = [
  "hex",
  "horrorshow",
  "http",
+ "http-body",
  "http-serve",
  "hyper",
  "mime_guess",

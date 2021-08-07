@@ -20,6 +20,7 @@ headers = "0.3"
 hex = "0.4"
 horrorshow = { version = "0.8", default-features = false, features = ["alloc"] }
 http = "0.2"
+http-body = "0.4"
 http-serve = "0.3"
 hyper = { version = "0.14", features = [
     "http1",

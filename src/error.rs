@@ -156,6 +156,9 @@ impl Display for Error {
 impl error::Error for Error {}
 
 impl IntoResponse for Error {
+    type Body = hyper::Body;
+    type BodyError = <Self::Body as http_body::Body>::Error;
+
     fn into_response(self) -> Response<Body> {
         match self {
             Error::ShareNotFound => Response::builder()
