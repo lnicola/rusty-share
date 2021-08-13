@@ -51,7 +51,7 @@ impl<B: Send> FromRequest<B> for Authentication {
         let rusty_share = req.extensions().unwrap().get::<Arc<RustyShare>>().unwrap();
         let store = &rusty_share.store;
         let cookie = req.headers().unwrap().typed_get::<Cookie>();
-        let authentication = match check_session(store, req.uri().unwrap(), cookie) {
+        let authentication = match check_session(store, req.uri(), cookie) {
             Ok((user_id, name)) => Authentication::User(user_id, name),
             Err(response) => Authentication::Error(response),
         };

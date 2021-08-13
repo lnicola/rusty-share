@@ -1,12 +1,14 @@
 use async_trait::async_trait;
-use axum::extract::{self, BodyStream, Extension, Form, FromRequest, Query, RequestParts};
+use axum::extract::{
+    self, BodyStream, Extension, Form, FromRequest, NestedUri, Query, RequestParts,
+};
 use axum::handler::get;
 use axum::response::IntoResponse;
 use axum::routing::RoutingDsl;
 use axum::{route, AddExtensionLayer};
 use futures_util::stream::StreamExt;
 use http::header::CONTENT_TYPE;
-use http::{HeaderMap, HeaderValue, Request};
+use http::{HeaderMap, HeaderValue, Request, Uri};
 use http_serve::{self, ChunkedReadFile};
 use hyper::{Body, Server};
 use os_str_bytes::{OsStrBytes, OsStringBytes};
@@ -170,14 +172,13 @@ impl RustyShare {
         authentication: Authentication,
         request: Request<Body>,
     ) -> Result<Response, Error> {
-        tracing::info!("{}", request.uri());
         let (user_id, user_name) = match authentication {
             Authentication::User(user_id, name) => {
-                tracing::info!("{} /browse/{}/{}", name, share, local_path.display());
+                tracing::info!("{} {}", name, local_path.display());
                 (Some(user_id), Some(name))
             }
             Authentication::Error(_) => {
-                tracing::info!("anonymous /browse/{}/{}", share, local_path.display());
+                tracing::info!("anonymous {}", local_path.display());
                 (None, None)
             }
         };
@@ -193,16 +194,17 @@ impl RustyShare {
         &self,
         share: &str,
         local_path: PathBuf,
+        uri: Uri,
         files: Form<Files>,
         authentication: Authentication,
     ) -> Result<Response, Error> {
         let user_id = match authentication {
             Authentication::User(user_id, name) => {
-                tracing::info!("{} /browse/{}/{}", name, share, local_path.display());
+                tracing::info!("{} {}", name, local_path.display());
                 Some(user_id)
             }
             Authentication::Error(_) => {
-                tracing::info!("anonymous /browse/{}/{}", share, local_path.display());
+                tracing::info!("anonymous {}", local_path.display());
                 None
             }
         };
@@ -219,12 +221,7 @@ impl RustyShare {
                     .collect::<Vec<_>>();
                 RustyShare::archive(share.path, local_path, files).await
             }
-            None => Ok(response::login_redirect(
-                &format!("/browse/{}/{}", share, local_path.display())
-                    .parse()
-                    .unwrap(),
-                false,
-            )),
+            None => Ok(response::login_redirect(&uri, false)),
         }
     }
 
@@ -232,16 +229,17 @@ impl RustyShare {
         &self,
         share: &str,
         local_path: &Path,
+        uri: Uri,
         authentication: Authentication,
         body_stream: BodyStream,
     ) -> Result<Response, Error> {
         let (user_id, _) = match authentication {
             Authentication::User(user_id, name) => {
-                tracing::info!("{} /browse/{}/{}", name, share, local_path.display());
+                tracing::info!("{} {}", name, local_path.display());
                 (Some(user_id), Some(name))
             }
             Authentication::Error(_) => {
-                tracing::info!("anonymous /browse/{}/{}", share, local_path.display());
+                tracing::info!("anonymous {}", local_path.display());
                 (None, None)
             }
         };
@@ -256,12 +254,7 @@ impl RustyShare {
                     })?;
                 Ok(response::no_content())
             }
-            None => Ok(response::login_redirect(
-                &format!("/browse/{}/{}", share, local_path.display())
-                    .parse()
-                    .unwrap(),
-                false,
-            )),
+            None => Ok(response::login_redirect(&uri, false)),
             _ => Ok(response::forbidden()),
         }
     }
@@ -481,12 +474,13 @@ async fn share_browse(
 async fn share_archive(
     extract::Path(share): extract::Path<String>,
     LocalPath(local_path): LocalPath,
+    uri: Uri,
     files: Form<Files>,
     authentication: Authentication,
     state: Extension<Arc<RustyShare>>,
 ) -> impl IntoResponse {
     state
-        .archive_(&share, local_path, files, authentication)
+        .archive_(&share, local_path, uri, files, authentication)
         .await
 }
 
@@ -505,12 +499,13 @@ async fn share_redirect(
 async fn upload(
     extract::Path(share): extract::Path<String>,
     LocalPath(local_path): LocalPath,
+    uri: Uri,
     authentication: Authentication,
     state: Extension<Arc<RustyShare>>,
     body_stream: BodyStream,
 ) -> impl IntoResponse {
     state
-        .upload(&share, &local_path, authentication, body_stream)
+        .upload(&share, &local_path, uri, authentication, body_stream)
         .await
         .unwrap()
 }
@@ -658,23 +653,17 @@ impl<B: Send> FromRequest<B> for LocalPath {
     type Rejection = PathTraversalAttempt;
 
     async fn from_request(req: &mut RequestParts<B>) -> Result<Self, Self::Rejection> {
-        match req.uri() {
-            Some(uri) => {
-                let pb = decode(uri.path())
-                    .map(|s| s.components().skip(1).collect::<PathBuf>())
-                    .and_then(|pb| {
-                        if check_for_path_traversal(&pb) {
-                            Ok(LocalPath(pb))
-                        } else {
-                            Err(Error::InvalidArgument)
-                        }
-                    });
-                pb.map_err(|_| PathTraversalAttempt)
-            }
-            None => {
-                unreachable!()
-            }
-        }
+        let nested_uri = NestedUri::from_request(req).await.unwrap();
+        let pb = decode(nested_uri.0.path())
+            .map(|s| s.components().skip(1).collect::<PathBuf>())
+            .and_then(|pb| {
+                if check_for_path_traversal(&pb) {
+                    Ok(LocalPath(pb))
+                } else {
+                    Err(Error::InvalidArgument)
+                }
+            });
+        pb.map_err(|_| PathTraversalAttempt)
     }
 }
 
