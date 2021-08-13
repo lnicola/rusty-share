@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use axum::body::HttpBody;
 use axum::extract::{
     self, BodyStream, Extension, Form, FromRequest, NestedUri, Query, RequestParts,
 };
@@ -637,24 +638,31 @@ fn check_for_path_traversal(path: &Path) -> bool {
 
 struct LocalPath(PathBuf);
 
-struct PathTraversalAttempt;
-
-impl IntoResponse for PathTraversalAttempt {
+enum LocalPathRejection {
+    NotNested,
+    PathTraversalAttempt,
+}
+impl IntoResponse for LocalPathRejection {
     type Body = hyper::Body;
-    type BodyError = <Self::Body as http_body::Body>::Error;
+    type BodyError = <Self::Body as HttpBody>::Error;
 
     fn into_response(self) -> http::Response<Body> {
-        response::bad_request()
+        match self {
+            LocalPathRejection::NotNested => response::internal_server_error(),
+            LocalPathRejection::PathTraversalAttempt => response::bad_request(),
+        }
     }
 }
 
 #[async_trait]
 impl<B: Send> FromRequest<B> for LocalPath {
-    type Rejection = PathTraversalAttempt;
+    type Rejection = LocalPathRejection;
 
     async fn from_request(req: &mut RequestParts<B>) -> Result<Self, Self::Rejection> {
-        let nested_uri = NestedUri::from_request(req).await.unwrap();
-        let pb = decode(nested_uri.0.path())
+        let nested_uri = NestedUri::from_request(req)
+            .await
+            .map_err(|_| LocalPathRejection::NotNested)?;
+        decode(nested_uri.0.path())
             .map(|s| s.components().skip(1).collect::<PathBuf>())
             .and_then(|pb| {
                 if check_for_path_traversal(&pb) {
@@ -662,8 +670,8 @@ impl<B: Send> FromRequest<B> for LocalPath {
                 } else {
                     Err(Error::InvalidArgument)
                 }
-            });
-        pb.map_err(|_| PathTraversalAttempt)
+            })
+            .map_err(|_| LocalPathRejection::PathTraversalAttempt)
     }
 }
 

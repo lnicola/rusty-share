@@ -1012,7 +1012,6 @@ dependencies = [
  "hex",
  "horrorshow",
  "http",
- "http-body",
  "http-serve",
  "hyper",
  "mime_guess",

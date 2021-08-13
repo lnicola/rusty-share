@@ -4,6 +4,7 @@ use std::io;
 use std::net::AddrParseError;
 use std::path::{PathBuf, StripPrefixError};
 
+use axum::body::HttpBody;
 use axum::response::IntoResponse;
 use http::{Response, StatusCode};
 use hyper::Body;
@@ -157,7 +158,7 @@ impl error::Error for Error {}
 
 impl IntoResponse for Error {
     type Body = hyper::Body;
-    type BodyError = <Self::Body as http_body::Body>::Error;
+    type BodyError = <Self::Body as HttpBody>::Error;
 
     fn into_response(self) -> Response<Body> {
         match self {
