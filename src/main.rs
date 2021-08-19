@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use axum::body::HttpBody;
 use axum::extract::{
-    self, BodyStream, Extension, Form, FromRequest, NestedUri, Query, RequestParts,
+    self, BodyStream, Extension, Form, FromRequest, OriginalUri, Query, RequestParts,
 };
 use axum::handler::get;
 use axum::response::IntoResponse;
@@ -170,16 +170,17 @@ impl RustyShare {
         &self,
         share: &str,
         local_path: PathBuf,
+        original_uri: Uri,
         authentication: Authentication,
         request: Request<Body>,
     ) -> Result<Response, Error> {
         let (user_id, user_name) = match authentication {
             Authentication::User(user_id, name) => {
-                tracing::info!("{} {}", name, local_path.display());
+                tracing::info!("{} {}", name, original_uri);
                 (Some(user_id), Some(name))
             }
             Authentication::Error(_) => {
-                tracing::info!("anonymous {}", local_path.display());
+                tracing::info!("anonymous {}", original_uri);
                 (None, None)
             }
         };
@@ -187,7 +188,7 @@ impl RustyShare {
         let r = Self::lookup_share(&self.root, &self.store, share, user_id).await?;
         match r {
             Some(share) => RustyShare::browse(share, local_path, request, user_name).await,
-            None => Ok(response::login_redirect(request.uri(), false)),
+            None => Ok(response::login_redirect(&original_uri, false)),
         }
     }
 
@@ -195,17 +196,17 @@ impl RustyShare {
         &self,
         share: &str,
         local_path: PathBuf,
-        uri: Uri,
+        original_uri: Uri,
         files: Form<Files>,
         authentication: Authentication,
     ) -> Result<Response, Error> {
         let user_id = match authentication {
             Authentication::User(user_id, name) => {
-                tracing::info!("{} {}", name, local_path.display());
+                tracing::info!("{} {}", name, original_uri);
                 Some(user_id)
             }
             Authentication::Error(_) => {
-                tracing::info!("anonymous {}", local_path.display());
+                tracing::info!("anonymous {}", original_uri);
                 None
             }
         };
@@ -222,7 +223,7 @@ impl RustyShare {
                     .collect::<Vec<_>>();
                 RustyShare::archive(share.path, local_path, files).await
             }
-            None => Ok(response::login_redirect(&uri, false)),
+            None => Ok(response::login_redirect(&original_uri, false)),
         }
     }
 
@@ -230,17 +231,17 @@ impl RustyShare {
         &self,
         share: &str,
         local_path: &Path,
-        uri: Uri,
+        original_uri: Uri,
         authentication: Authentication,
         body_stream: BodyStream,
     ) -> Result<Response, Error> {
         let (user_id, _) = match authentication {
             Authentication::User(user_id, name) => {
-                tracing::info!("{} {}", name, local_path.display());
+                tracing::info!("{} {}", name, original_uri);
                 (Some(user_id), Some(name))
             }
             Authentication::Error(_) => {
-                tracing::info!("anonymous {}", local_path.display());
+                tracing::info!("anonymous {}", original_uri);
                 (None, None)
             }
         };
@@ -255,7 +256,7 @@ impl RustyShare {
                     })?;
                 Ok(response::no_content())
             }
-            None => Ok(response::login_redirect(&uri, false)),
+            None => Ok(response::login_redirect(&original_uri, false)),
             _ => Ok(response::forbidden()),
         }
     }
@@ -464,24 +465,27 @@ async fn favicon(state: Extension<Arc<RustyShare>>) -> impl IntoResponse {
 
 async fn share_browse(
     extract::Path(share): extract::Path<String>,
-    LocalPath(local_path): LocalPath,
+    local_path: LocalPath,
+    original_uri: OriginalUri,
     authentication: Authentication,
     state: Extension<Arc<RustyShare>>,
     req: Request<Body>,
 ) -> impl IntoResponse {
-    state.browse_(&share, local_path, authentication, req).await
+    state
+        .browse_(&share, local_path.0, original_uri.0, authentication, req)
+        .await
 }
 
 async fn share_archive(
     extract::Path(share): extract::Path<String>,
-    LocalPath(local_path): LocalPath,
-    uri: Uri,
+    local_path: LocalPath,
+    original_uri: OriginalUri,
     files: Form<Files>,
     authentication: Authentication,
     state: Extension<Arc<RustyShare>>,
 ) -> impl IntoResponse {
     state
-        .archive_(&share, local_path, uri, files, authentication)
+        .archive_(&share, local_path.0, original_uri.0, files, authentication)
         .await
 }
 
@@ -499,14 +503,20 @@ async fn share_redirect(
 
 async fn upload(
     extract::Path(share): extract::Path<String>,
-    LocalPath(local_path): LocalPath,
-    uri: Uri,
+    local_path: LocalPath,
+    original_uri: OriginalUri,
     authentication: Authentication,
     state: Extension<Arc<RustyShare>>,
     body_stream: BodyStream,
 ) -> impl IntoResponse {
     state
-        .upload(&share, &local_path, uri, authentication, body_stream)
+        .upload(
+            &share,
+            local_path.0.as_path(),
+            original_uri.0,
+            authentication,
+            body_stream,
+        )
         .await
         .unwrap()
 }
@@ -639,16 +649,15 @@ fn check_for_path_traversal(path: &Path) -> bool {
 struct LocalPath(PathBuf);
 
 enum LocalPathRejection {
-    NotNested,
     PathTraversalAttempt,
 }
+
 impl IntoResponse for LocalPathRejection {
     type Body = hyper::Body;
     type BodyError = <Self::Body as HttpBody>::Error;
 
     fn into_response(self) -> http::Response<Body> {
         match self {
-            LocalPathRejection::NotNested => response::internal_server_error(),
             LocalPathRejection::PathTraversalAttempt => response::bad_request(),
         }
     }
@@ -659,10 +668,7 @@ impl<B: Send> FromRequest<B> for LocalPath {
     type Rejection = LocalPathRejection;
 
     async fn from_request(req: &mut RequestParts<B>) -> Result<Self, Self::Rejection> {
-        let nested_uri = NestedUri::from_request(req)
-            .await
-            .map_err(|_| LocalPathRejection::NotNested)?;
-        decode(nested_uri.0.path())
+        decode(req.uri().path())
             .map(|s| s.components().skip(1).collect::<PathBuf>())
             .and_then(|pb| {
                 if check_for_path_traversal(&pb) {
