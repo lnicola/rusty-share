@@ -5,8 +5,7 @@ use axum::extract::{
 };
 use axum::handler::get;
 use axum::response::IntoResponse;
-use axum::routing::RoutingDsl;
-use axum::{route, AddExtensionLayer};
+use axum::{AddExtensionLayer, Router};
 use futures_util::stream::StreamExt;
 use http::header::CONTENT_TYPE;
 use http::{HeaderMap, HeaderValue, Request, Uri};
@@ -583,7 +582,8 @@ async fn run() -> Result<(), Error> {
 
             let state = Arc::clone(&rusty_share);
 
-            let app = route("/", get(index))
+            let app = Router::new()
+                .route("/", get(index))
                 .route("/login", get(login_page).post(login_post))
                 .route("/favicon.ico", get(favicon))
                 .route(
