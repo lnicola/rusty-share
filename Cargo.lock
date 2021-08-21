@@ -78,7 +78,7 @@ checksum = "cdb031dd78e28731d87d56cc8ffef4a8f36ca26c38fe2de700543e627f8a464a"
 [[package]]
 name = "axum"
 version = "0.1.3"
-source = "git+https://github.com/tokio-rs/axum#1bda638c6b28f07c323dd66e91c36e4c6b61fcfd"
+source = "git+https://github.com/tokio-rs/axum#fbd43c6600ee988d8cd39e73e411be55512abaeb"
 dependencies = [
  "async-trait",
  "bitflags",
@@ -97,6 +97,8 @@ dependencies = [
  "tokio-util",
  "tower",
  "tower-http",
+ "tower-layer",
+ "tower-service",
 ]
 
 [[package]]
