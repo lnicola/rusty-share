@@ -6,6 +6,9 @@ on:
     branches:
       - master
 
+env:
+  CARGO_INCREMENTAL: 0
+
 jobs:
   build:
 
@@ -24,9 +27,9 @@ jobs:
       uses: actions-rs/toolchain@v1
       with:
           toolchain: stable
-
-    - name: Install components
-      run: rustup component add --toolchain stable rustfmt clippy
+          profile: minimal
+          override: true
+          components: clippy, rustfmt
 
     - name: Install libsqlite3-dev
       if: matrix.os == 'ubuntu-latest'
@@ -45,8 +48,6 @@ jobs:
         args: --all -- --check
 
     - name: Check
-      env:
-        CARGO_INCREMENTAL: 0
       uses: actions-rs/cargo@v1
       with:
         command: check
@@ -54,15 +55,11 @@ jobs:
 
     - name: Clippy
       uses: actions-rs/cargo@v1
-      env:
-        CARGO_INCREMENTAL: 0
       with:
         command: clippy
         args: -- -D warnings
 
     - name: Build
-      env:
-        CARGO_INCREMENTAL: 0
       uses: actions-rs/cargo@v1
       with:
         command: build
@@ -70,8 +67,6 @@ jobs:
 
     - name: Test
       uses: actions-rs/cargo@v1
-      env:
-        CARGO_INCREMENTAL: 0
       with:
         command: test
         args: --features bundled-sqlite
