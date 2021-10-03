@@ -40,6 +40,9 @@ pub enum Error {
     Hyper {
         cause: hyper::Error,
     },
+    Axum {
+        cause: axum::Error,
+    },
     R2d2 {
         cause: r2d2::Error,
     },
@@ -106,6 +109,12 @@ impl From<hyper::Error> for Error {
     }
 }
 
+impl From<axum::Error> for Error {
+    fn from(cause: axum::Error) -> Self {
+        Error::Axum { cause }
+    }
+}
+
 impl From<r2d2::Error> for Error {
     fn from(cause: r2d2::Error) -> Self {
         Error::R2d2 { cause }
@@ -145,6 +154,7 @@ impl Display for Error {
             Error::Rusqlite { cause } => cause.fmt(f),
             Error::Horrorshow { cause } => cause.fmt(f),
             Error::Hyper { cause } => cause.fmt(f),
+            Error::Axum { cause } => cause.fmt(f),
             Error::R2d2 { cause } => cause.fmt(f),
             Error::Rand { cause } => cause.fmt(f),
             Error::Hash { cause } => cause.fmt(f),

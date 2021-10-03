@@ -77,16 +77,18 @@ checksum = "cdb031dd78e28731d87d56cc8ffef4a8f36ca26c38fe2de700543e627f8a464a"
 
 [[package]]
 name = "axum"
-version = "0.1.3"
-source = "git+https://github.com/tokio-rs/axum#add3dc36f94b9f15a6d78594fccb6e867960191f"
+version = "0.2.6"
+source = "git+https://github.com/tokio-rs/axum#afabded38559587805df349d6765391fd8d0c208"
 dependencies = [
  "async-trait",
  "bitflags",
  "bytes",
+ "dyn-clone",
  "futures-util",
  "http",
  "http-body",
  "hyper",
+ "percent-encoding",
  "pin-project-lite",
  "regex",
  "serde",
@@ -263,6 +265,12 @@ checksum = "d3dd60d1080a57a05ab032377049e0591415d2b31afd7028356dbf3cc6dcb066"
 dependencies = [
  "generic-array",
 ]
+
+[[package]]
+name = "dyn-clone"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee2626afccd7561a06cf1367e2950c4718ea04565e20fb5029b6c7d8ad09abcf"
 
 [[package]]
 name = "either"

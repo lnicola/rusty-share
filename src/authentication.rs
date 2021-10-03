@@ -51,7 +51,6 @@ pub enum AuthenticationRejection {
     MissingExtensions,
     MissingHeaders,
     MissingDb,
-    InternalError,
 }
 
 impl IntoResponse for AuthenticationRejection {
@@ -62,8 +61,7 @@ impl IntoResponse for AuthenticationRejection {
         match self {
             AuthenticationRejection::MissingExtensions
             | AuthenticationRejection::MissingHeaders
-            | AuthenticationRejection::MissingDb
-            | AuthenticationRejection::InternalError => hyper::Response::builder()
+            | AuthenticationRejection::MissingDb => hyper::Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .body(Empty::new())
                 .unwrap(),
