@@ -29,7 +29,7 @@ hyper = { version = "0.14", features = [
     "tcp",
 ] }
 mime_guess = "2.0"
-os_str_bytes = "3.1"
+os_str_bytes = "4.2"
 percent-encoding = "2.1"
 pico-args = "0.4"
 rayon = "1.5"
