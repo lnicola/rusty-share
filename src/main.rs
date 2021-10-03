@@ -760,7 +760,7 @@ fn render_index(
 
 pub fn register_user(store: &SqliteStore, name: String, password: &str) -> Result<User, Error> {
     let salt = SaltString::generate(OsRng);
-    let hash = Scrypt.hash_password_simple(password.as_bytes(), salt.as_str())?;
+    let hash = Scrypt.hash_password(password.as_bytes(), salt.as_str())?;
     let user = NewUser {
         name,
         password: hash.to_string(),
@@ -771,7 +771,7 @@ pub fn register_user(store: &SqliteStore, name: String, password: &str) -> Resul
 
 pub fn reset_password(store: &SqliteStore, name: &str, password: &str) -> Result<(), Error> {
     let salt = SaltString::generate(OsRng);
-    let hash = Scrypt.hash_password_simple(password.as_bytes(), salt.as_str())?;
+    let hash = Scrypt.hash_password(password.as_bytes(), salt.as_str())?;
     store.update_password_by_name(name, &hash.to_string())?;
     Ok(())
 }

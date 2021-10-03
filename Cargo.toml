@@ -37,7 +37,7 @@ r2d2 = "0.8"
 r2d2_sqlite = "0.18"
 rand_core = { version = "0.6.2", features = ["getrandom"] }
 rusqlite = "0.25"
-scrypt = { version = "0.7" }
+scrypt = { version = "0.8" }
 serde = { version = "1.0", features = ["derive"] }
 tar = { version = "0.4", default-features = false }
 tokio = { version = "1.6", features = [
