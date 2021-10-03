@@ -48,9 +48,9 @@ fn check_session(
 }
 
 pub enum AuthenticationRejection {
-    MissingExtensions,
-    MissingHeaders,
-    MissingDb,
+    Extensions,
+    Headers,
+    Db,
 }
 
 impl IntoResponse for AuthenticationRejection {
@@ -59,9 +59,9 @@ impl IntoResponse for AuthenticationRejection {
 
     fn into_response(self) -> http::Response<Self::Body> {
         match self {
-            AuthenticationRejection::MissingExtensions
-            | AuthenticationRejection::MissingHeaders
-            | AuthenticationRejection::MissingDb => hyper::Response::builder()
+            AuthenticationRejection::Extensions
+            | AuthenticationRejection::Headers
+            | AuthenticationRejection::Db => hyper::Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .body(Empty::new())
                 .unwrap(),
@@ -77,13 +77,13 @@ impl<B: Send> FromRequest<B> for Authentication {
         // TODO: block or block_in_place
         let rusty_share = req
             .extensions()
-            .ok_or(AuthenticationRejection::MissingExtensions)?
+            .ok_or(AuthenticationRejection::Extensions)?
             .get::<Arc<RustyShare>>()
-            .ok_or(AuthenticationRejection::MissingDb)?;
+            .ok_or(AuthenticationRejection::Db)?;
         let store = &rusty_share.store;
         let cookie = req
             .headers()
-            .ok_or(AuthenticationRejection::MissingHeaders)?
+            .ok_or(AuthenticationRejection::Headers)?
             .typed_get::<Cookie>();
         let authentication = match check_session(store, req.uri(), cookie) {
             Ok((user_id, name)) => Authentication::User(user_id, name),
