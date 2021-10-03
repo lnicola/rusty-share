@@ -52,6 +52,7 @@ pub enum Error {
     StreamCancelled,
     InvalidArgument,
     ShareNotFound,
+    AuthenticationRequired,
 }
 
 impl Error {
@@ -150,6 +151,7 @@ impl Display for Error {
             Error::StreamCancelled => write!(f, "the archiving stream was cancelled unexpectedly"),
             Error::InvalidArgument => write!(f, "invalid argument"),
             Error::ShareNotFound => write!(f, "share not found"),
+            Error::AuthenticationRequired => write!(f, "authentication required"),
         }
     }
 }

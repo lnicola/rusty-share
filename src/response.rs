@@ -26,10 +26,15 @@ pub fn login_ok(session_id: String, redirect: &str) -> Response<Body> {
         .unwrap()
 }
 
-pub fn login_redirect(path: &Uri, destroy_session: bool) -> Response<Body> {
+pub fn encode_redirect_uri(path: &Uri) -> String {
     let path = path.path_and_query().map(|p| p.as_str()).unwrap_or("/");
     let path =
         percent_encoding::utf8_percent_encode(path, percent_encoding::NON_ALPHANUMERIC).to_string();
+    format!("/login?redirect={}", path)
+}
+
+pub fn login_redirect(path: &Uri, destroy_session: bool) -> Response<Body> {
+    let path = encode_redirect_uri(path);
     let mut builder = Response::builder();
 
     if destroy_session {
@@ -39,10 +44,7 @@ pub fn login_redirect(path: &Uri, destroy_session: bool) -> Response<Body> {
     }
     builder
         .status(StatusCode::FOUND)
-        .header(
-            LOCATION,
-            HeaderValue::from_str(&format!("/login?redirect={}", path)).unwrap(),
-        )
+        .header(LOCATION, HeaderValue::from_str(&path).unwrap())
         .body(Body::empty())
         .unwrap()
 }
