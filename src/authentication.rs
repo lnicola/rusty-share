@@ -1,10 +1,10 @@
+use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::db::SqliteStore;
 use crate::response;
 use crate::Response;
 use crate::RustyShare;
-use async_trait::async_trait;
 use axum::body::Empty;
 use axum::body::HttpBody;
 use axum::extract::FromRequest;
@@ -15,6 +15,7 @@ use headers::Cookie;
 use headers::HeaderMapExt;
 use http::StatusCode;
 use http::Uri;
+use std::future::Future;
 
 pub enum Authentication {
     User(i32, String),
@@ -69,26 +70,30 @@ impl IntoResponse for AuthenticationRejection {
     }
 }
 
-#[async_trait]
 impl<B: Send> FromRequest<B> for Authentication {
     type Rejection = AuthenticationRejection;
-
-    async fn from_request(req: &mut RequestParts<B>) -> Result<Self, Self::Rejection> {
-        // TODO: block or block_in_place
-        let rusty_share = req
-            .extensions()
-            .ok_or(AuthenticationRejection::Extensions)?
-            .get::<Arc<RustyShare>>()
-            .ok_or(AuthenticationRejection::Db)?;
-        let store = &rusty_share.store;
-        let cookie = req
-            .headers()
-            .ok_or(AuthenticationRejection::Headers)?
-            .typed_get::<Cookie>();
-        let authentication = match check_session(store, req.uri(), cookie) {
-            Ok((user_id, name)) => Authentication::User(user_id, name),
-            Err(response) => Authentication::Error(response),
-        };
-        Ok(authentication)
+    fn from_request<'a, 'f>(
+        req: &'a mut RequestParts<B>,
+    ) -> Pin<Box<dyn Future<Output = Result<Self, Self::Rejection>> + Send + 'f>>
+    where
+        'a: 'f,
+    {
+        Box::pin(async move {
+            let rusty_share = req
+                .extensions()
+                .ok_or(AuthenticationRejection::Extensions)?
+                .get::<Arc<RustyShare>>()
+                .ok_or(AuthenticationRejection::Db)?;
+            let store = &rusty_share.store;
+            let cookie = req
+                .headers()
+                .ok_or(AuthenticationRejection::Headers)?
+                .typed_get::<Cookie>();
+            let authentication = match check_session(store, req.uri(), cookie) {
+                Ok((user_id, name)) => Authentication::User(user_id, name),
+                Err(response) => Authentication::Error(response),
+            };
+            Ok(authentication)
+        })
     }
 }
