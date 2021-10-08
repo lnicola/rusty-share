@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use axum::body::HttpBody;
 use axum::extract::{
     self, BodyStream, Extension, Form, FromRequest, OriginalUri, Query, RequestParts,
@@ -20,8 +19,10 @@ use scrypt::Scrypt;
 use std::borrow::Cow;
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry};
+use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Component, Path, PathBuf};
+use std::pin::Pin;
 use std::str;
 use std::sync::Arc;
 use std::time::Instant;
@@ -663,21 +664,26 @@ impl IntoResponse for LocalPathRejection {
     }
 }
 
-#[async_trait]
 impl<B: Send> FromRequest<B> for LocalPath {
     type Rejection = LocalPathRejection;
-
-    async fn from_request(req: &mut RequestParts<B>) -> Result<Self, Self::Rejection> {
-        decode(req.uri().path())
-            .map(|s| s.components().skip(1).collect::<PathBuf>())
-            .and_then(|pb| {
-                if check_for_path_traversal(&pb) {
-                    Ok(LocalPath(pb))
-                } else {
-                    Err(Error::InvalidArgument)
-                }
-            })
-            .map_err(|_| LocalPathRejection::PathTraversalAttempt)
+    fn from_request<'a, 'f>(
+        req: &'a mut RequestParts<B>,
+    ) -> Pin<Box<dyn Future<Output = Result<Self, Self::Rejection>> + Send + 'f>>
+    where
+        'a: 'f,
+    {
+        Box::pin(async move {
+            decode(req.uri().path())
+                .map(|s| s.components().skip(1).collect::<PathBuf>())
+                .and_then(|pb| {
+                    if check_for_path_traversal(&pb) {
+                        Ok(LocalPath(pb))
+                    } else {
+                        Err(Error::InvalidArgument)
+                    }
+                })
+                .map_err(|_| LocalPathRejection::PathTraversalAttempt)
+        })
     }
 }
 
