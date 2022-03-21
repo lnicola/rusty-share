@@ -2,8 +2,8 @@ use axum::body::HttpBody;
 use axum::extract::{
     self, BodyStream, Extension, Form, FromRequest, OriginalUri, Query, RequestParts,
 };
+use axum::handler::get;
 use axum::response::IntoResponse;
-use axum::routing::get;
 use axum::{AddExtensionLayer, Router};
 use futures_util::stream::StreamExt;
 use http::header::CONTENT_TYPE;
