@@ -56,6 +56,7 @@ pub enum Error {
     InvalidArgument,
     ShareNotFound,
     AuthenticationRequired,
+    DatabaseNotAvailable,
 }
 
 impl Error {
@@ -162,6 +163,7 @@ impl Display for Error {
             Error::InvalidArgument => write!(f, "invalid argument"),
             Error::ShareNotFound => write!(f, "share not found"),
             Error::AuthenticationRequired => write!(f, "authentication required"),
+            Error::DatabaseNotAvailable => write!(f, "database not available"),
         }
     }
 }
@@ -175,6 +177,10 @@ impl IntoResponse for Error {
     fn into_response(self) -> Response<Body> {
         match self {
             Error::ShareNotFound => Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(Body::empty())
+                .unwrap(),
+            Error::DatabaseNotAvailable => Response::builder()
                 .status(StatusCode::NOT_FOUND)
                 .body(Body::empty())
                 .unwrap(),

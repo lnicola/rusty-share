@@ -268,7 +268,7 @@ impl RustyShare {
                 e
             })?)
         } else {
-            Ok(response::not_found())
+            Err(Error::DatabaseNotAvailable)
         }
     }
 
@@ -278,10 +278,10 @@ impl RustyShare {
         user: &str,
         pass: &str,
     ) -> Result<Response, Error> {
-        let response = if let Some(store) = store {
+        if let Some(store) = store {
             let redirect = redirect.unwrap_or_else(|| String::from("/browse/"));
             let session = authenticate(store, user, pass).await?;
-            if let Some(session_id) = session {
+            let response = if let Some(session_id) = session {
                 tracing::info!("Authenticating {}: success", user);
                 response::login_ok(hex::encode(&session_id), &redirect)
             } else {
@@ -293,11 +293,11 @@ impl RustyShare {
                     tracing::error!("{}", e);
                     e
                 })?
-            }
+            };
+            Ok(response)
         } else {
-            response::not_found()
-        };
-        Ok(response)
+            return Err(Error::DatabaseNotAvailable);
+        }
     }
 
     async fn browse_shares(&self, authentication: Authentication) -> Result<Response, Error> {
