@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 async-stream = "0.3"
-axum = { version = "0.2", git = "https://github.com/tokio-rs/axum" }
+axum = { version = "0.3" }
 bytes = "1.1"
 bytesize = "1.0"
 chrono = { version = "0.4", default-features = false }
