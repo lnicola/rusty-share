@@ -248,7 +248,7 @@ impl RustyShare {
 
         match Self::lookup_share(&self.root, &self.store, share, user_id).await? {
             Some(share) if share.upload_allowed => {
-                RustyShare::do_upload(&share.path.join(&local_path), body_stream)
+                RustyShare::do_upload(&share.path.join(local_path), body_stream)
                     .await
                     .map_err(|e| {
                         tracing::error!("{}", e);
@@ -283,7 +283,7 @@ impl RustyShare {
             let session = authenticate(store, user, pass).await?;
             let response = if let Some(session_id) = session {
                 tracing::info!("Authenticating {}: success", user);
-                response::login_ok(hex::encode(&session_id), &redirect)
+                response::login_ok(hex::encode(session_id), &redirect)
             } else {
                 tracing::info!("Authenticating {}: failed", user);
                 page::login(Some(
@@ -296,7 +296,7 @@ impl RustyShare {
             };
             Ok(response)
         } else {
-            return Err(Error::DatabaseNotAvailable);
+            Err(Error::DatabaseNotAvailable)
         }
     }
 
@@ -385,7 +385,7 @@ impl RustyShare {
         path: PathBuf,
         mut files: Vec<PathBuf>,
     ) -> Result<Response, Error> {
-        let disk_path = share.join(&path);
+        let disk_path = share.join(path);
         task::block_in_place(move || {
             if files.is_empty() {
                 for entry in dir_entries(&disk_path)? {
@@ -604,12 +604,12 @@ async fn run() -> Result<(), Error> {
                         .on_response(DefaultOnResponse::new().level(Level::INFO)),
                 );
 
-            let listener = std::net::TcpListener::bind(&addr)?;
+            let listener = std::net::TcpListener::bind(addr)?;
 
             let server = Server::from_tcp(listener)?
                 .tcp_nodelay(true)
                 .serve(app.into_make_service());
-            return Ok(server.await?);
+            Ok(server.await?)
         }
         Command::Help => Ok(()),
     }

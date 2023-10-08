@@ -209,7 +209,7 @@ mod tests {
             rusqlite::bypass_sqlite_version_check();
         }
 
-        let store = SqliteStore::new(&Path::new(":memory:"))?;
+        let store = SqliteStore::new(Path::new(":memory:"))?;
         store.initialize_database()?;
         Ok(store)
     }

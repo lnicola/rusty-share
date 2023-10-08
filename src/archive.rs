@@ -65,7 +65,7 @@ impl Archive {
 
         let relative_path = entry
             .path()
-            .strip_prefix(&root)
+            .strip_prefix(root)
             .map_err(|e| {
                 Error::from_strip_prefix(e, entry.path().to_path_buf(), root.to_path_buf())
             })?
