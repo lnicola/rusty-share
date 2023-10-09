@@ -1,11 +1,11 @@
-use axum::extract::{
-    self, BodyStream, Extension, Form, FromRequest, OriginalUri, Query, RequestParts,
-};
+use async_trait::async_trait;
+use axum::extract::{self, BodyStream, Form, FromRequestParts, OriginalUri, Query, State};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 use futures_util::stream::StreamExt;
 use http::header::CONTENT_TYPE;
+use http::request::Parts;
 use http::{HeaderMap, HeaderValue, Request, Uri};
 use hyper::body::HttpBody;
 use hyper::service::Service;
@@ -19,10 +19,8 @@ use scrypt::Scrypt;
 use std::borrow::Cow;
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry};
-use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Component, Path, PathBuf};
-use std::pin::Pin;
 use std::str;
 use std::sync::Arc;
 use std::time::Instant;
@@ -440,16 +438,16 @@ fn get_store(path: &Path) -> SqliteStore {
     store
 }
 
-async fn index(state: Extension<Arc<RustyShare>>) -> impl IntoResponse {
+async fn index(state: State<Arc<RustyShare>>) -> impl IntoResponse {
     state.index().await
 }
 
-async fn login_page(state: Extension<Arc<RustyShare>>) -> impl IntoResponse {
+async fn login_page(state: State<Arc<RustyShare>>) -> impl IntoResponse {
     state.login_page().await
 }
 
 async fn login_post(
-    state: Extension<Arc<RustyShare>>,
+    state: State<Arc<RustyShare>>,
     redirect: Option<Query<Redirect>>,
     login_form: Form<LoginForm>,
 ) -> impl IntoResponse {
@@ -462,7 +460,7 @@ async fn login_post(
     .await
 }
 
-async fn favicon(state: Extension<Arc<RustyShare>>) -> impl IntoResponse {
+async fn favicon(state: State<Arc<RustyShare>>) -> impl IntoResponse {
     state.favicon().await
 }
 
@@ -471,7 +469,7 @@ async fn share_browse(
     local_path: LocalPath,
     original_uri: OriginalUri,
     authentication: Authentication,
-    state: Extension<Arc<RustyShare>>,
+    state: State<Arc<RustyShare>>,
     req: Request<Body>,
 ) -> impl IntoResponse {
     state
@@ -483,9 +481,9 @@ async fn share_archive(
     extract::Path(share): extract::Path<String>,
     local_path: LocalPath,
     original_uri: OriginalUri,
-    files: Form<Files>,
     authentication: Authentication,
-    state: Extension<Arc<RustyShare>>,
+    state: State<Arc<RustyShare>>,
+    files: Form<Files>,
 ) -> impl IntoResponse {
     state
         .archive_(&share, local_path.0, original_uri.0, files, authentication)
@@ -495,7 +493,7 @@ async fn share_archive(
 async fn share_redirect(
     extract::Path(share): extract::Path<String>,
     authentication: Authentication,
-    state: Extension<Arc<RustyShare>>,
+    state: State<Arc<RustyShare>>,
 ) -> impl IntoResponse {
     if share.is_empty() {
         state.browse_shares(authentication).await.unwrap()
@@ -509,7 +507,7 @@ async fn upload(
     local_path: LocalPath,
     original_uri: OriginalUri,
     authentication: Authentication,
-    state: Extension<Arc<RustyShare>>,
+    state: State<Arc<RustyShare>>,
     body_stream: BodyStream,
 ) -> impl IntoResponse {
     state
@@ -596,12 +594,15 @@ async fn run() -> Result<(), Error> {
                 )
                 .nest(
                     "/browse/:share/",
-                    get(share_browse)
-                        .head(share_browse)
-                        .post(share_archive)
-                        .put(upload),
+                    Router::new().route(
+                        "/",
+                        get(share_browse)
+                            .head(share_browse)
+                            .post(share_archive)
+                            .put(upload),
+                    ),
                 )
-                .layer(Extension(state))
+                .with_state(state)
                 .layer(
                     TraceLayer::new_for_http()
                         .on_response(DefaultOnResponse::new().level(Level::INFO)),
@@ -664,26 +665,24 @@ impl IntoResponse for LocalPathRejection {
     }
 }
 
-impl<B: Send> FromRequest<B> for LocalPath {
+#[async_trait]
+impl<S> FromRequestParts<S> for LocalPath
+where
+    S: Send + Sync,
+{
     type Rejection = LocalPathRejection;
-    fn from_request<'a, 'f>(
-        req: &'a mut RequestParts<B>,
-    ) -> Pin<Box<dyn Future<Output = Result<Self, Self::Rejection>> + Send + 'f>>
-    where
-        'a: 'f,
-    {
-        Box::pin(async move {
-            decode(req.uri().path())
-                .map(|s| s.components().skip(1).collect::<PathBuf>())
-                .and_then(|pb| {
-                    if check_for_path_traversal(&pb) {
-                        Ok(LocalPath(pb))
-                    } else {
-                        Err(Error::InvalidArgument)
-                    }
-                })
-                .map_err(|_| LocalPathRejection::PathTraversalAttempt)
-        })
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        decode(parts.uri.path())
+            .map(|s| s.components().skip(1).collect::<PathBuf>())
+            .and_then(|pb| {
+                if check_for_path_traversal(&pb) {
+                    Ok(LocalPath(pb))
+                } else {
+                    Err(Error::InvalidArgument)
+                }
+            })
+            .map_err(|_| LocalPathRejection::PathTraversalAttempt)
     }
 }
 
