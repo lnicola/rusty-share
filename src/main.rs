@@ -490,6 +490,13 @@ async fn share_archive(
         .await
 }
 
+async fn share_index(
+    authentication: Authentication,
+    state: State<Arc<RustyShare>>,
+) -> impl IntoResponse {
+    state.browse_shares(authentication).await
+}
+
 async fn share_redirect(
     extract::Path(share): extract::Path<String>,
     authentication: Authentication,
@@ -588,6 +595,7 @@ async fn run() -> Result<(), Error> {
                 .route("/", get(index))
                 .route("/login", get(login_page).post(login_post))
                 .route("/favicon.ico", get(favicon))
+                .route("/browse/", get(share_index))
                 .route(
                     "/browse/:share",
                     get(share_redirect).post(share_redirect).put(upload),
