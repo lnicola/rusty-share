@@ -1,14 +1,14 @@
-use axum::body::HttpBody;
 use axum::extract::{
     self, BodyStream, Extension, Form, FromRequest, OriginalUri, Query, RequestParts,
 };
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use axum::{AddExtensionLayer, Router};
+use axum::Router;
 use futures_util::stream::StreamExt;
 use http::header::CONTENT_TYPE;
 use http::{HeaderMap, HeaderValue, Request, Uri};
-use http_serve::{self, ChunkedReadFile};
+use hyper::body::HttpBody;
+use hyper::service::Service;
 use hyper::{Body, Server};
 use os_str_bytes::{OsStrBytes, OsStringBytes};
 use rand_core::{OsRng, RngCore};
@@ -31,6 +31,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 use tokio::task;
+use tower_http::services::ServeFile;
 use tower_http::trace::{DefaultOnResponse, TraceLayer};
 use tracing::Level;
 use walkdir::WalkDir;
@@ -55,8 +56,6 @@ mod page;
 mod pipe;
 mod response;
 mod share_entry;
-
-type Response = http::Response<Body>;
 
 struct RustyShare {
     root: PathBuf,
@@ -353,9 +352,13 @@ impl RustyShare {
                     if let Some(mime) = mime_guess::from_path(&disk_path).first_raw() {
                         headers.insert(CONTENT_TYPE, HeaderValue::from_static(mime));
                     }
-                    let file = tokio::fs::File::open(&disk_path).await?.into_std().await;
-                    let crf = ChunkedReadFile::new(file, headers)?;
-                    http_serve::serve(crf, &request)
+
+                    let response = ServeFile::new(&disk_path).call(request).await?;
+                    Response::builder()
+                        .body(response.boxed_unsync())
+                        .unwrap()
+                        .map_err(Error::from)
+                        .into_response()
                 }
             }
             Err(e) => {
@@ -598,7 +601,7 @@ async fn run() -> Result<(), Error> {
                         .post(share_archive)
                         .put(upload),
                 )
-                .layer(AddExtensionLayer::new(state))
+                .layer(Extension(state))
                 .layer(
                     TraceLayer::new_for_http()
                         .on_response(DefaultOnResponse::new().level(Level::INFO)),
@@ -654,10 +657,7 @@ enum LocalPathRejection {
 }
 
 impl IntoResponse for LocalPathRejection {
-    type Body = hyper::Body;
-    type BodyError = <Self::Body as HttpBody>::Error;
-
-    fn into_response(self) -> http::Response<Body> {
+    fn into_response(self) -> axum::response::Response {
         match self {
             LocalPathRejection::PathTraversalAttempt => response::bad_request(),
         }

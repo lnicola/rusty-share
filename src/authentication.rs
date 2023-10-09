@@ -3,16 +3,11 @@ use std::sync::Arc;
 
 use crate::db::SqliteStore;
 use crate::response;
-use crate::Response;
 use crate::RustyShare;
-use axum::body::Empty;
-use axum::body::HttpBody;
-use axum::extract::FromRequest;
-use axum::extract::RequestParts;
-use axum::response::IntoResponse;
-use bytes::Bytes;
-use headers::Cookie;
-use headers::HeaderMapExt;
+use axum::body::{self, Empty};
+use axum::extract::{FromRequest, RequestParts};
+use axum::response::{IntoResponse, Response};
+use headers::{Cookie, HeaderMapExt};
 use http::StatusCode;
 use http::Uri;
 use std::future::Future;
@@ -55,16 +50,13 @@ pub enum AuthenticationRejection {
 }
 
 impl IntoResponse for AuthenticationRejection {
-    type Body = Empty<Bytes>;
-    type BodyError = <Self::Body as HttpBody>::Error;
-
-    fn into_response(self) -> http::Response<Self::Body> {
+    fn into_response(self) -> Response {
         match self {
             AuthenticationRejection::Extensions
             | AuthenticationRejection::Headers
-            | AuthenticationRejection::Db => hyper::Response::builder()
+            | AuthenticationRejection::Db => Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Empty::new())
+                .body(body::boxed(Empty::new()))
                 .unwrap(),
         }
     }
