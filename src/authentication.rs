@@ -44,17 +44,13 @@ fn check_session(
 }
 
 pub enum AuthenticationRejection {
-    Extensions,
-    Headers,
     Db,
 }
 
 impl IntoResponse for AuthenticationRejection {
     fn into_response(self) -> Response {
         match self {
-            AuthenticationRejection::Extensions
-            | AuthenticationRejection::Headers
-            | AuthenticationRejection::Db => Response::builder()
+            AuthenticationRejection::Db => Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .body(body::boxed(Empty::new()))
                 .unwrap(),
@@ -73,14 +69,10 @@ impl<B: Send> FromRequest<B> for Authentication {
         Box::pin(async move {
             let rusty_share = req
                 .extensions()
-                .ok_or(AuthenticationRejection::Extensions)?
                 .get::<Arc<RustyShare>>()
                 .ok_or(AuthenticationRejection::Db)?;
             let store = &rusty_share.store;
-            let cookie = req
-                .headers()
-                .ok_or(AuthenticationRejection::Headers)?
-                .typed_get::<Cookie>();
+            let cookie = req.headers().typed_get::<Cookie>();
             let authentication = match check_session(store, req.uri(), cookie) {
                 Ok((user_id, name)) => Authentication::User(user_id, name),
                 Err(response) => Authentication::Error(response),
