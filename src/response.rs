@@ -79,13 +79,6 @@ pub fn found(location: &str) -> Response {
         .unwrap()
 }
 
-pub fn bad_request() -> Response {
-    Response::builder()
-        .status(StatusCode::BAD_REQUEST)
-        .body(body::boxed(Body::empty()))
-        .unwrap()
-}
-
 pub fn forbidden() -> Response {
     Response::builder()
         .status(StatusCode::FORBIDDEN)

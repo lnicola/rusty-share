@@ -1,26 +1,24 @@
-use async_trait::async_trait;
-use axum::extract::{self, BodyStream, Form, FromRequestParts, OriginalUri, Query, State};
+use axum::extract::{self, BodyStream, Form, OriginalUri, Query, State};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::Router;
 use futures_util::stream::StreamExt;
 use http::header::CONTENT_TYPE;
-use http::request::Parts;
 use http::{HeaderMap, HeaderValue, Request, Uri};
 use hyper::body::HttpBody;
 use hyper::service::Service;
 use hyper::{Body, Server};
-use os_str_bytes::{OsStrBytes, OsStringBytes};
+use os_str_bytes::OsStrBytes;
 use rand_core::{OsRng, RngCore};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rayon::slice::ParallelSliceMut;
 use scrypt::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use scrypt::Scrypt;
-use std::borrow::Cow;
+use serde::Deserialize;
 use std::ffi::OsStr;
 use std::fs::{self, DirEntry};
 use std::net::{IpAddr, SocketAddr};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::str;
 use std::sync::Arc;
 use std::time::Instant;
@@ -58,6 +56,13 @@ mod share_entry;
 struct RustyShare {
     root: PathBuf,
     store: Option<SqliteStore>,
+}
+
+#[derive(Deserialize)]
+struct RequestPath {
+    share: String,
+    #[serde(default)]
+    path: PathBuf,
 }
 
 fn get_archive(archive: Archive) -> Body {
@@ -333,7 +338,7 @@ impl RustyShare {
             Ok(metadata) => {
                 if metadata.is_dir() {
                     if !uri_path.ends_with('/') {
-                        response::found(&format!("/browse/{}/{}/", share.name, uri_path))
+                        response::found(&format!("/browse/{}/{}/", share.name, path.display()))
                     } else {
                         task::block_in_place(move || {
                             render_index(
@@ -465,28 +470,43 @@ async fn favicon(state: State<Arc<RustyShare>>) -> impl IntoResponse {
 }
 
 async fn share_browse(
-    extract::Path(share): extract::Path<String>,
-    local_path: LocalPath,
+    extract::Path(request_path): extract::Path<RequestPath>,
     original_uri: OriginalUri,
     authentication: Authentication,
     state: State<Arc<RustyShare>>,
     req: Request<Body>,
 ) -> impl IntoResponse {
+    tracing::trace!(
+        share = %request_path.share,
+        path = %request_path.path.display(),
+        original_uri = %original_uri.0
+    );
     state
-        .browse_(&share, local_path.0, original_uri.0, authentication, req)
+        .browse_(
+            &request_path.share,
+            request_path.path,
+            original_uri.0,
+            authentication,
+            req,
+        )
         .await
 }
 
 async fn share_archive(
-    extract::Path(share): extract::Path<String>,
-    local_path: LocalPath,
+    extract::Path(request_path): extract::Path<RequestPath>,
     original_uri: OriginalUri,
     authentication: Authentication,
     state: State<Arc<RustyShare>>,
     files: Form<Files>,
 ) -> impl IntoResponse {
     state
-        .archive_(&share, local_path.0, original_uri.0, files, authentication)
+        .archive_(
+            &request_path.share,
+            request_path.path,
+            original_uri.0,
+            files,
+            authentication,
+        )
         .await
 }
 
@@ -498,20 +518,19 @@ async fn share_index(
 }
 
 async fn share_redirect(
-    extract::Path(share): extract::Path<String>,
+    extract::Path(request_path): extract::Path<RequestPath>,
     authentication: Authentication,
     state: State<Arc<RustyShare>>,
 ) -> impl IntoResponse {
-    if share.is_empty() {
+    if request_path.share.is_empty() {
         state.browse_shares(authentication).await.unwrap()
     } else {
-        response::found(&format!("{}/", share))
+        response::found(&format!("{}/", request_path.share))
     }
 }
 
 async fn upload(
-    extract::Path(share): extract::Path<String>,
-    local_path: LocalPath,
+    request_path: extract::Path<RequestPath>,
     original_uri: OriginalUri,
     authentication: Authentication,
     state: State<Arc<RustyShare>>,
@@ -519,8 +538,8 @@ async fn upload(
 ) -> impl IntoResponse {
     state
         .upload(
-            &share,
-            local_path.0.as_path(),
+            &request_path.share,
+            request_path.path.as_path(),
             original_uri.0,
             authentication,
             body_stream,
@@ -600,15 +619,19 @@ async fn run() -> Result<(), Error> {
                     "/browse/:share",
                     get(share_redirect).post(share_redirect).put(upload),
                 )
-                .nest(
+                .route(
                     "/browse/:share/",
-                    Router::new().route(
-                        "/",
-                        get(share_browse)
-                            .head(share_browse)
-                            .post(share_archive)
-                            .put(upload),
-                    ),
+                    get(share_browse)
+                        .head(share_browse)
+                        .post(share_archive)
+                        .put(upload),
+                )
+                .route(
+                    "/browse/:share/*path",
+                    get(share_browse)
+                        .head(share_browse)
+                        .post(share_archive)
+                        .put(upload),
                 )
                 .with_state(state)
                 .layer(
@@ -624,73 +647,6 @@ async fn run() -> Result<(), Error> {
             Ok(server.await?)
         }
         Command::Help => Ok(()),
-    }
-}
-
-fn decode(s: &str) -> Result<PathBuf, Error> {
-    let percent_decoded = Cow::from(percent_encoding::percent_decode_str(s));
-    let os_str =
-        PathBuf::from_raw_vec(percent_decoded.into_owned()).map_err(|_e| Error::InvalidArgument)?;
-    Ok(os_str)
-}
-
-fn check_for_path_traversal(path: &Path) -> bool {
-    let mut depth = 0u32;
-    for c in path.components() {
-        match c {
-            Component::Prefix(_) | Component::RootDir => {
-                return false;
-            }
-            Component::CurDir => {
-                // no-op
-            }
-            Component::ParentDir => {
-                depth = match depth.checked_sub(1) {
-                    Some(v) => v,
-                    None => return false,
-                }
-            }
-            Component::Normal(_) => {
-                depth += 1;
-            }
-        }
-    }
-
-    true
-}
-
-struct LocalPath(PathBuf);
-
-enum LocalPathRejection {
-    PathTraversalAttempt,
-}
-
-impl IntoResponse for LocalPathRejection {
-    fn into_response(self) -> axum::response::Response {
-        match self {
-            LocalPathRejection::PathTraversalAttempt => response::bad_request(),
-        }
-    }
-}
-
-#[async_trait]
-impl<S> FromRequestParts<S> for LocalPath
-where
-    S: Send + Sync,
-{
-    type Rejection = LocalPathRejection;
-
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        decode(parts.uri.path())
-            .map(|s| s.components().skip(1).collect::<PathBuf>())
-            .and_then(|pb| {
-                if check_for_path_traversal(&pb) {
-                    Ok(LocalPath(pb))
-                } else {
-                    Err(Error::InvalidArgument)
-                }
-            })
-            .map_err(|_| LocalPathRejection::PathTraversalAttempt)
     }
 }
 
