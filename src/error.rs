@@ -4,9 +4,10 @@ use std::io;
 use std::net::AddrParseError;
 use std::path::{PathBuf, StripPrefixError};
 
-use axum::body::{self, Empty};
+use axum::body;
 use axum::response::{IntoResponse, Response};
 use http::StatusCode;
+use hyper::Body;
 use scrypt::password_hash;
 
 #[derive(Debug)]
@@ -174,15 +175,15 @@ impl IntoResponse for Error {
         match self {
             Error::ShareNotFound => Response::builder()
                 .status(StatusCode::NOT_FOUND)
-                .body(body::boxed(Empty::new()))
+                .body(body::boxed(Body::empty()))
                 .unwrap(),
             Error::DatabaseNotAvailable => Response::builder()
                 .status(StatusCode::NOT_FOUND)
-                .body(body::boxed(Empty::new()))
+                .body(body::boxed(Body::empty()))
                 .unwrap(),
             _ => Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(body::boxed(Empty::new()))
+                .body(body::boxed(Body::empty()))
                 .unwrap(),
         }
     }

@@ -1,4 +1,4 @@
-use axum::body::{self, Body, Empty};
+use axum::body::{self, Body};
 use axum::response::Response;
 use http::header::{CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE, LOCATION, SET_COOKIE};
 use http::{HeaderValue, StatusCode, Uri};
@@ -23,7 +23,7 @@ pub fn login_ok(session_id: String, redirect: &str) -> Response {
         .status(StatusCode::FOUND)
         .header(SET_COOKIE, HeaderValue::from_str(&cookie).unwrap())
         .header(LOCATION, HeaderValue::from_str(redirect).unwrap())
-        .body(body::boxed(Empty::new()))
+        .body(body::boxed(Body::empty()))
         .unwrap()
 }
 
@@ -46,7 +46,7 @@ pub fn login_redirect(path: &Uri, destroy_session: bool) -> Response {
     builder
         .status(StatusCode::FOUND)
         .header(LOCATION, HeaderValue::from_str(&path).unwrap())
-        .body(body::boxed(Empty::new()))
+        .body(body::boxed(Body::empty()))
         .unwrap()
 }
 
@@ -67,7 +67,7 @@ pub fn archive(content_length: u64, body: Body, file_name: &str) -> Response {
 pub fn no_content() -> Response {
     Response::builder()
         .status(StatusCode::NO_CONTENT)
-        .body(body::boxed(Empty::new()))
+        .body(body::boxed(Body::empty()))
         .unwrap()
 }
 
@@ -75,34 +75,34 @@ pub fn found(location: &str) -> Response {
     Response::builder()
         .status(StatusCode::FOUND)
         .header(LOCATION, HeaderValue::from_str(location).unwrap())
-        .body(body::boxed(Empty::new()))
+        .body(body::boxed(Body::empty()))
         .unwrap()
 }
 
 pub fn bad_request() -> Response {
     Response::builder()
         .status(StatusCode::BAD_REQUEST)
-        .body(body::boxed(Empty::new()))
+        .body(body::boxed(Body::empty()))
         .unwrap()
 }
 
 pub fn forbidden() -> Response {
     Response::builder()
         .status(StatusCode::FORBIDDEN)
-        .body(body::boxed(Empty::new()))
+        .body(body::boxed(Body::empty()))
         .unwrap()
 }
 
 pub fn not_found() -> Response {
     Response::builder()
         .status(StatusCode::NOT_FOUND)
-        .body(body::boxed(Empty::new()))
+        .body(body::boxed(Body::empty()))
         .unwrap()
 }
 
 pub fn internal_server_error() -> Response {
     Response::builder()
         .status(StatusCode::INTERNAL_SERVER_ERROR)
-        .body(body::boxed(Empty::new()))
+        .body(body::boxed(Body::empty()))
         .unwrap()
 }
