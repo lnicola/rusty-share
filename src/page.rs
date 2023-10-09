@@ -2,11 +2,11 @@ use crate::db::models::Share;
 use crate::error::Error;
 use crate::response;
 use crate::share_entry::ShareEntry;
+use axum::response::Response;
 use horrorshow::helper::doctype;
 use horrorshow::{html, Raw, Template};
 use http::header::SET_COOKIE;
-use http::{HeaderValue, Response};
-use hyper::Body;
+use http::HeaderValue;
 use std::path::Path;
 
 pub fn index(
@@ -15,7 +15,7 @@ pub fn index(
     entries: &[ShareEntry],
     upload_allowed: bool,
     user_name: Option<String>,
-) -> Result<Response<Body>, Error> {
+) -> Result<Response, Error> {
     let page = html! {
         : doctype::HTML;
         html {
@@ -81,7 +81,7 @@ pub fn index(
     Ok(response::page(page))
 }
 
-pub fn shares(shares: Vec<Share>, user_name: Option<String>) -> Result<Response<Body>, Error> {
+pub fn shares(shares: Vec<Share>, user_name: Option<String>) -> Result<Response, Error> {
     let page = html! {
         : doctype::HTML;
         html {
@@ -120,7 +120,7 @@ pub fn shares(shares: Vec<Share>, user_name: Option<String>) -> Result<Response<
     Ok(response::page(page))
 }
 
-pub fn login(message: Option<&str>) -> Result<Response<Body>, Error> {
+pub fn login(message: Option<&str>) -> Result<Response, Error> {
     let page = html! {
         : doctype::HTML;
         html {

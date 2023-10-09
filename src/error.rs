@@ -4,10 +4,9 @@ use std::io;
 use std::net::AddrParseError;
 use std::path::{PathBuf, StripPrefixError};
 
-use axum::body::HttpBody;
-use axum::response::IntoResponse;
-use http::{Response, StatusCode};
-use hyper::Body;
+use axum::body::{self, Empty};
+use axum::response::{IntoResponse, Response};
+use http::StatusCode;
 use scrypt::password_hash;
 
 #[derive(Debug)]
@@ -171,22 +170,19 @@ impl Display for Error {
 impl error::Error for Error {}
 
 impl IntoResponse for Error {
-    type Body = hyper::Body;
-    type BodyError = <Self::Body as HttpBody>::Error;
-
-    fn into_response(self) -> Response<Body> {
+    fn into_response(self) -> Response {
         match self {
             Error::ShareNotFound => Response::builder()
                 .status(StatusCode::NOT_FOUND)
-                .body(Body::empty())
+                .body(body::boxed(Empty::new()))
                 .unwrap(),
             Error::DatabaseNotAvailable => Response::builder()
                 .status(StatusCode::NOT_FOUND)
-                .body(Body::empty())
+                .body(body::boxed(Empty::new()))
                 .unwrap(),
             _ => Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Body::empty())
+                .body(body::boxed(Empty::new()))
                 .unwrap(),
         }
     }
