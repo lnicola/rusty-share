@@ -27,6 +27,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 use tokio::task;
+use tower_cookies::CookieManagerLayer;
 use tower_http::services::ServeFile;
 use tower_http::trace::{DefaultOnResponse, TraceLayer};
 use tracing::Level;
@@ -634,6 +635,7 @@ async fn run() -> Result<(), Error> {
                         .put(upload),
                 )
                 .with_state(state)
+                .layer(CookieManagerLayer::new())
                 .layer(
                     TraceLayer::new_for_http()
                         .on_response(DefaultOnResponse::new().level(Level::INFO)),
